@@ -1,0 +1,412 @@
+import { useState, useEffect } from 'react';
+import { Team, LineupState, Formation, Player } from './types';
+import TeamManager from './components/TeamManager';
+import LineupPreview from './components/LineupPreview';
+import { FORMATIONS, FORMATION_POSITIONS } from './constants';
+import { Layout, Image as ImageIcon, Users, Settings, Download, Search } from 'lucide-react';
+
+const initialState: LineupState = {
+  teamName: '',
+  formation: '4-2-3-1',
+  players: {},
+  subs: '',
+  tournamentLogo: '',
+  tournamentLogoMonochrome: true,
+  matchday: '',
+  homeLogo: '',
+  awayLogo: '',
+  background: '',
+  glowColor: '',
+  possibleLineup: false,
+  possibleLineupText: 'Possible\nline-up',
+};
+
+const placeholderAvatar =
+  "data:image/svg+xml;utf8," +
+  encodeURIComponent(
+    `<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>` +
+      `<rect width='64' height='64' rx='32' fill='%23e2e8f0'/>` +
+      `<circle cx='32' cy='26' r='12' fill='%23cbd5e1'/>` +
+      `<rect x='14' y='40' width='36' height='14' rx='7' fill='%23cbd5e1'/>` +
+    `</svg>`
+  );
+
+const slugify = (value: string) =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[’'ʼ]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+const isRemoteUrl = (value: string) => /^https?:\/\//i.test(value);
+
+const getLocalCandidates = (teamName: string, displayName: string) => {
+  const teamFolder = teamName ? encodeURIComponent(teamName) : '';
+  const slug = slugify(displayName || '');
+  if (!slug) return '';
+  const bases = teamFolder
+    ? [
+        `/img/players/${teamFolder}/${encodeURIComponent(slug)}.png`,
+        `/img/players/${teamFolder}/${encodeURIComponent(slug)}.webp`,
+        `/img/players/${teamFolder}/${encodeURIComponent(slug)}.jpg`,
+        `/img/players/${teamFolder}/${encodeURIComponent(slug)}.jpeg`,
+        `/img/players-uefa/${teamFolder}/${encodeURIComponent(slug)}.png`,
+      ]
+    : [
+        `/img/players/${encodeURIComponent(slug)}.png`,
+        `/img/players/${encodeURIComponent(slug)}.webp`,
+        `/img/players/${encodeURIComponent(slug)}.jpg`,
+        `/img/players/${encodeURIComponent(slug)}.jpeg`,
+        `/img/players-uefa/${encodeURIComponent(slug)}.png`,
+      ];
+  return bases;
+};
+
+const getImageUrlLocalCandidate = (teamName: string, imageUrl: string) => {
+  const raw = String(imageUrl || '').trim();
+  if (!raw || isRemoteUrl(raw)) return '';
+  const teamFolder = teamName ? encodeURIComponent(teamName) : '';
+  return teamFolder ? `/img/players/${teamFolder}/${encodeURIComponent(raw)}` : `/img/players/${encodeURIComponent(raw)}`;
+};
+
+const Thumb = ({
+  sources,
+  className,
+}: {
+  sources: string[];
+  className?: string;
+}) => {
+  const [idx, setIdx] = useState(0);
+  const src = sources[idx] || placeholderAvatar;
+  return (
+    <img
+      src={src}
+      onError={() => {
+        if (idx < sources.length - 1) {
+          setIdx(idx + 1);
+        } else if (src !== placeholderAvatar) {
+          setIdx(sources.length);
+        }
+      }}
+      alt=""
+      className={className}
+    />
+  );
+};
+
+export default function App() {
+  const [state, setState] = useState<LineupState>(initialState);
+  const [currentTeam, setCurrentTeam] = useState<Team | null>(null);
+  const [backgrounds, setBackgrounds] = useState<string[]>([]);
+  const [searchTerm, setSearchTerm] = useState<Record<string, string>>({});
+  const [openDropdown, setOpenDropdown] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    fetch('/api/backgrounds').then(res => res.json()).then(setBackgrounds);
+  }, []);
+
+  const handleTeamSelect = (team: Team) => {
+    const fallbackBg = backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.png`)
+      || backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.jpg`)
+      || backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.jpeg`)
+      || backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.webp`)
+      || '';
+    setCurrentTeam(team);
+    setState(prev => ({
+      ...prev,
+      teamName: team.name,
+      players: {},
+      subs: '',
+      background: team.defaultBackground ?? fallbackBg ?? prev.background,
+      glowColor: team.glowColor ?? ''
+    }));
+    setSearchTerm({});
+  };
+
+  const updatePlayer = (posId: string, player: Player | null) => {
+    setState(prev => ({
+      ...prev,
+      players: { ...prev.players, [posId]: player }
+    }));
+    if (!player) {
+      setSearchTerm(prev => ({ ...prev, [posId]: '' }));
+    }
+  };
+
+  const positions = FORMATION_POSITIONS[state.formation];
+  const getFilteredPlayers = (role: Player['role'], term: string) => {
+    const players = currentTeam?.players || [];
+    const filtered = players.filter(p => p.role === role);
+    if (!term.trim()) return filtered;
+    const lower = term.toLowerCase();
+    return filtered.filter(p => p.name.toLowerCase().includes(lower));
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col lg:flex-row">
+      {/* Sidebar Controls */}
+      <div className="w-full lg:w-1/2 p-4 lg:p-8 overflow-y-auto lg:h-screen border-r border-slate-200">
+        <div className="max-w-2xl mx-auto">
+          <header className="mb-8">
+            <h1 className="text-3xl font-bold text-slate-900">UEFA Lineup Builder</h1>
+            <p className="text-slate-500">Create professional matchday graphics</p>
+          </header>
+
+          <TeamManager onTeamSelect={handleTeamSelect} backgrounds={backgrounds} />
+
+          {currentTeam && (
+            <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              {/* Formation & Background */}
+              <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Layout className="w-5 h-5 text-indigo-600" />
+                  Layout & Style
+                </h2>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Formation</label>
+                    <select 
+                      className="w-full p-2 border border-slate-300 rounded-lg bg-slate-50"
+                      value={state.formation}
+                      onChange={(e) => setState(prev => ({ ...prev, formation: e.target.value as Formation }))}
+                    >
+                      {FORMATIONS.map(f => <option key={f} value={f}>{f}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Background</label>
+                    <select 
+                      className="w-full p-2 border border-slate-300 rounded-lg bg-slate-50"
+                      value={state.background}
+                      onChange={(e) => setState(prev => ({ ...prev, background: e.target.value }))}
+                    >
+                      <option value="">Select Background...</option>
+                      {backgrounds.map(bg => <option key={bg} value={bg}>{bg}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </section>
+
+              {/* Match Info */}
+              <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Settings className="w-5 h-5 text-indigo-600" />
+                  Match Information
+                </h2>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <input
+                      id="possible-lineup"
+                      type="checkbox"
+                      checked={state.possibleLineup}
+                      onChange={(e) => setState(prev => ({ ...prev, possibleLineup: e.target.checked }))}
+                    />
+                    <label htmlFor="possible-lineup" className="text-sm font-medium text-slate-700">
+                      Possible lineup
+                    </label>
+                  </div>
+                  {!state.possibleLineup && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Tournament Logo URL</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-2 border border-slate-300 rounded-lg"
+                          value={state.tournamentLogo}
+                          onChange={(e) => setState(prev => ({ ...prev, tournamentLogo: e.target.value }))}
+                          placeholder="https://..."
+                        />
+                        <label className="mt-2 flex items-center gap-2 text-sm text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={state.tournamentLogoMonochrome}
+                            onChange={(e) => setState(prev => ({ ...prev, tournamentLogoMonochrome: e.target.checked }))}
+                          />
+                          Monochrome (force white)
+                        </label>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Matchday / Stage Name</label>
+                        <input 
+                          type="text" 
+                          className="w-full p-2 border border-slate-300 rounded-lg"
+                          value={state.matchday}
+                          onChange={(e) => setState(prev => ({ ...prev, matchday: e.target.value }))}
+                          placeholder="e.g. QUARTER-FINAL"
+                        />
+                      </div>
+                    </>
+                  )}
+                  {state.possibleLineup && (
+                    <textarea
+                      className="w-full h-24 p-3 border border-slate-300 rounded-lg bg-slate-50 text-sm"
+                      value={state.possibleLineupText}
+                      onChange={(e) => setState(prev => ({ ...prev, possibleLineupText: e.target.value }))}
+                    />
+                  )}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Home Team Logo URL</label>
+                      <input 
+                        type="text" 
+                        className="w-full p-2 border border-slate-300 rounded-lg"
+                        value={state.homeLogo}
+                        onChange={(e) => setState(prev => ({ ...prev, homeLogo: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Away Team Logo URL</label>
+                      <input 
+                        type="text" 
+                        className="w-full p-2 border border-slate-300 rounded-lg"
+                        value={state.awayLogo}
+                        onChange={(e) => setState(prev => ({ ...prev, awayLogo: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              {/* Lineup Selection */}
+              <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <Users className="w-5 h-5 text-indigo-600" />
+                  Starting Lineup
+                </h2>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {positions.map(pos => (
+                    <div key={pos.id} className="relative">
+                      <label className="block text-xs font-bold uppercase text-slate-400 mb-1">{pos.label}</label>
+                      <div className="relative">
+                        <input 
+                          type="text"
+                          className="w-full p-2 pl-8 border border-slate-300 rounded-lg bg-slate-50 text-sm"
+                          placeholder={`Search ${pos.role}...`}
+                          value={searchTerm[pos.id] || ''}
+                          onChange={(e) => {
+                            const value = e.target.value;
+                            setSearchTerm(prev => ({ ...prev, [pos.id]: value }));
+                            if (value.trim() === '') {
+                              updatePlayer(pos.id, null);
+                              return;
+                            }
+                            setOpenDropdown(prev => ({ ...prev, [pos.id]: true }));
+                          }}
+                          onFocus={() => setOpenDropdown(prev => ({ ...prev, [pos.id]: true }))}
+                          onBlur={() => {
+                            window.setTimeout(() => {
+                              setOpenDropdown(prev => ({ ...prev, [pos.id]: false }));
+                            }, 150);
+                          }}
+                        />
+                        <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
+                      </div>
+
+                      {openDropdown[pos.id] && (
+                        <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                          {getFilteredPlayers(pos.role, searchTerm[pos.id] || '').map(p => {
+                            const localCandidates = getLocalCandidates(state.teamName, p.displayName || p.name);
+                            const imageUrlLocal = getImageUrlLocalCandidate(state.teamName, p.imageUrl || '');
+                            const sources = [
+                              ...localCandidates,
+                              ...(imageUrlLocal ? [imageUrlLocal] : []),
+                              ...(isRemoteUrl(p.imageUrl) ? [p.imageUrl] : []),
+                            ].filter(Boolean) as string[];
+                            return (
+                            <button
+                              key={`${pos.id}-${p.name}`}
+                              className="w-full text-left p-2 hover:bg-slate-50 flex items-center gap-2 border-b border-slate-50 last:border-0"
+                              onClick={() => {
+                                updatePlayer(pos.id, p);
+                                setSearchTerm(prev => ({ ...prev, [pos.id]: p.name }));
+                                setOpenDropdown(prev => ({ ...prev, [pos.id]: false }));
+                              }}
+                            >
+                              <Thumb sources={sources} className="w-8 h-8 rounded-full object-cover bg-slate-100" />
+                              <span className="text-sm font-medium">{p.name}</span>
+                            </button>
+                          )})}
+                          {getFilteredPlayers(pos.role, searchTerm[pos.id] || '').length === 0 && (
+                            <div className="p-2 text-sm text-slate-500">No matches</div>
+                          )}
+                        </div>
+                      )}
+
+                      {state.players[pos.id] && (
+                        <div className="mt-2 flex items-center justify-between p-2 bg-indigo-50 rounded-lg border border-indigo-100">
+                          <div className="flex items-center gap-2 overflow-hidden">
+                            <Thumb
+                              sources={[
+                                ...getLocalCandidates(state.teamName, state.players[pos.id]?.displayName || state.players[pos.id]?.name || ''),
+                                ...(getImageUrlLocalCandidate(state.teamName, state.players[pos.id]?.imageUrl || '') ? [getImageUrlLocalCandidate(state.teamName, state.players[pos.id]?.imageUrl || '')] : []),
+                                ...(isRemoteUrl(state.players[pos.id]?.imageUrl || '') ? [state.players[pos.id]?.imageUrl] : []),
+                              ].filter(Boolean) as string[]}
+                              className="w-8 h-8 rounded-full object-cover"
+                            />
+                            <span className="text-sm font-semibold text-indigo-900 truncate">{state.players[pos.id]?.displayName}</span>
+                          </div>
+                          <button 
+                            onClick={() => updatePlayer(pos.id, null)}
+                            className="text-indigo-400 hover:text-indigo-600 p-1"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      )}
+
+                    </div>
+                  ))}
+                </div>
+              </section>
+
+              {/* Substitutes */}
+              {!state.possibleLineup && (
+                <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+                  <h2 className="text-lg font-semibold mb-4">Substitutes</h2>
+                  <textarea 
+                    className="w-full h-32 p-3 border border-slate-300 rounded-lg bg-slate-50 text-sm"
+                    placeholder="Enter substitute names, one per line..."
+                    value={state.subs}
+                    onChange={(e) => setState(prev => ({ ...prev, subs: e.target.value }))}
+                  />
+                </section>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Preview Window */}
+      <div className="w-full lg:w-1/2 p-4 lg:p-8 bg-slate-900 flex items-center justify-center lg:h-screen sticky top-0">
+        <div className="w-full max-w-[540px]">
+          <div className="flex justify-between items-center mb-4 text-white">
+            <h2 className="text-xl font-bold flex items-center gap-2">
+              <ImageIcon className="w-5 h-5" />
+              Live Preview
+            </h2>
+            <button 
+              onClick={() => {
+                const canvas = document.querySelector('canvas');
+                if (canvas) {
+                  const link = document.createElement('a');
+                  link.download = `${state.teamName || 'lineup'}.png`;
+                  link.href = canvas.toDataURL();
+                  link.click();
+                }
+              }}
+              className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 rounded-lg transition-colors text-sm font-medium"
+            >
+              <Download className="w-4 h-4" /> Download PNG
+            </button>
+          </div>
+          <LineupPreview state={state} />
+          <p className="text-slate-500 text-xs mt-4 text-center">
+            The graphic is rendered at 1080x1350px. Changes are reflected in real-time.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}

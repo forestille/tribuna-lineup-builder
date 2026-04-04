@@ -1,0 +1,5 @@
+{
+  "name": "UEFA Lineup Builder",
+  "description": "Create professional football lineups by parsing UEFA squad pages.",
+  "requestFramePermissions": []
+}
