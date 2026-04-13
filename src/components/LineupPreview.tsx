@@ -40,17 +40,23 @@ export default function LineupPreview({ state }: Props) {
     if (!ctx) return;
 
     const draw = async () => {
+      const ensureCanvasSize = (target: HTMLCanvasElement, width: number, height: number) => {
+        if (target.width !== width || target.height !== height) {
+          target.width = width;
+          target.height = height;
+          return true;
+        }
+        return false;
+      };
       // Ensure custom fonts are loaded before drawing text
       await ensureFontsLoaded();
       const baseCanvas = baseCanvasRef.current || document.createElement('canvas');
-      baseCanvas.width = canvas.width;
-      baseCanvas.height = canvas.height;
+      const baseResized = ensureCanvasSize(baseCanvas, canvas.width, canvas.height);
       baseCanvasRef.current = baseCanvas;
       const baseCtx = baseCanvas.getContext('2d');
 
       const playersCanvas = playersCanvasRef.current || document.createElement('canvas');
-      playersCanvas.width = canvas.width;
-      playersCanvas.height = canvas.height;
+      const playersResized = ensureCanvasSize(playersCanvas, canvas.width, canvas.height);
       playersCanvasRef.current = playersCanvas;
       const playersCtx = playersCanvas.getContext('2d');
 
@@ -67,7 +73,7 @@ export default function LineupPreview({ state }: Props) {
         awayLogo: state.awayLogo,
         subs: state.subs,
       });
-      const baseDirty = baseKey !== prevBaseKeyRef.current;
+      const baseDirty = baseKey !== prevBaseKeyRef.current || baseResized;
       if (baseDirty) {
         prevBaseKeyRef.current = baseKey;
         baseCtx.fillStyle = '#000';
@@ -194,7 +200,7 @@ export default function LineupPreview({ state }: Props) {
       const formationChanged = prevFormationRef.current !== state.formation;
       const teamChanged = prevTeamNameRef.current !== state.teamName;
       const glowChanged = prevGlowRef.current !== (state.glowColor || '');
-      const rerenderAllPlayers = formationChanged || teamChanged || glowChanged || !prevFormationRef.current;
+      const rerenderAllPlayers = formationChanged || teamChanged || glowChanged || !prevFormationRef.current || playersResized;
 
       prevFormationRef.current = state.formation;
       prevTeamNameRef.current = state.teamName;
@@ -213,33 +219,26 @@ export default function LineupPreview({ state }: Props) {
         playersCtx.clearRect(left, top, right - left, bottom - top);
       };
 
-      if (rerenderAllPlayers) {
+      // Redraw the entire players layer when any player changes to avoid partial clear artifacts.
+      // Base layer is still cached, so this remains fast while keeping visuals correct.
+      const nextKeys: Record<string, string> = {};
+      let playersDirty = rerenderAllPlayers;
+      for (const pos of positions) {
+        const key = getPlayerKey(state.players[pos.id]);
+        nextKeys[pos.id] = key;
+        if (prevPlayerKeysRef.current[pos.id] !== key) {
+          playersDirty = true;
+        }
+      }
+
+      if (playersDirty) {
         playersCtx.clearRect(0, 0, playersCanvas.width, playersCanvas.height);
-        const nextKeys: Record<string, string> = {};
         for (const pos of positions) {
           const player = state.players[pos.id];
-          nextKeys[pos.id] = getPlayerKey(player);
           await drawPlayerGlow(playersCtx, pos.x, pos.y, player);
         }
         for (const pos of positions) {
           const player = state.players[pos.id];
-          await drawPlayerImageAndTag(playersCtx, pos.x, pos.y, player);
-        }
-        prevPlayerKeysRef.current = nextKeys;
-      } else {
-        const nextKeys: Record<string, string> = { ...prevPlayerKeysRef.current };
-        const dirtyPositions = positions.filter(pos => {
-          const key = getPlayerKey(state.players[pos.id]);
-          if (prevPlayerKeysRef.current[pos.id] !== key) {
-            nextKeys[pos.id] = key;
-            return true;
-          }
-          return false;
-        });
-        for (const pos of dirtyPositions) {
-          clearPlayerRegion(pos.x, pos.y);
-          const player = state.players[pos.id];
-          await drawPlayerGlow(playersCtx, pos.x, pos.y, player);
           await drawPlayerImageAndTag(playersCtx, pos.x, pos.y, player);
         }
         prevPlayerKeysRef.current = nextKeys;
