@@ -9,6 +9,23 @@ interface Props {
 export default function LineupPreview({ state }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  const ensureFontsLoaded = (() => {
+    let cached: Promise<void> | null = null;
+    return () => {
+      if (cached) return cached;
+      if (!document?.fonts?.load) {
+        cached = Promise.resolve();
+        return cached;
+      }
+      cached = Promise.all([
+        document.fonts.load('900 93px "HeadingNowTrial 57 ExtraBold"'),
+        document.fonts.load('bold 30px "Kelson Sans"'),
+        document.fonts.load('bold 29.25px "Kelson Sans"'),
+      ]).then(() => undefined);
+      return cached;
+    };
+  })();
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -17,13 +34,7 @@ export default function LineupPreview({ state }: Props) {
 
     const draw = async () => {
       // Ensure custom fonts are loaded before drawing text
-      if (document?.fonts?.load) {
-        await Promise.all([
-          document.fonts.load('900 93px "HeadingNowTrial 57 ExtraBold"'),
-          document.fonts.load('bold 30px "Kelson Sans"'),
-          document.fonts.load('bold 29.25px "Kelson Sans"'),
-        ]);
-      }
+      await ensureFontsLoaded();
       // 1. Background
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -170,13 +181,18 @@ export default function LineupPreview({ state }: Props) {
   }, [state]);
 
   const loadImage = (src: string): Promise<HTMLImageElement> => {
-    return new Promise((resolve, reject) => {
+    const cache = (window as any).__lineupImageCache || ((window as any).__lineupImageCache = new Map());
+    if (cache.has(src)) return cache.get(src);
+    const promise = new Promise<HTMLImageElement>((resolve, reject) => {
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => resolve(img);
       img.onerror = reject;
       img.src = src;
     });
+    cache.set(src, promise);
+    promise.catch(() => cache.delete(src));
+    return promise;
   };
 
   const resolvePlayerImageCandidates = (p: Player | null) => {
