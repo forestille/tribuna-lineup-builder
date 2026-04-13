@@ -284,6 +284,22 @@ async function startServer() {
     app.get("/", (req, res) => {
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
+    app.get("/__debug", (req, res) => {
+      const distDir = path.join(__dirname, "dist");
+      const assetsDir = path.join(distDir, "assets");
+      const info = {
+        distExists: fs.existsSync(distDir),
+        indexExists: fs.existsSync(path.join(distDir, "index.html")),
+        assetsExists: fs.existsSync(assetsDir),
+        assets: [] as string[],
+      };
+      if (info.assetsExists) {
+        try {
+          info.assets = fs.readdirSync(assetsDir).slice(0, 50);
+        } catch {}
+      }
+      res.json(info);
+    });
     app.get("*", (req, res) => {
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
