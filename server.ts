@@ -280,13 +280,29 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
+    const distDir = path.join(__dirname, "dist");
+    const assetsDir = path.join(distDir, "assets");
+    app.use(
+      "/assets",
+      express.static(assetsDir, {
+        maxAge: "1y",
+        immutable: true,
+      })
+    );
+    app.use(
+      express.static(distDir, {
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith(".html")) {
+            res.setHeader("Cache-Control", "no-store");
+          }
+        },
+      })
+    );
     app.get("/", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+      res.setHeader("Cache-Control", "no-store");
+      res.sendFile(path.join(distDir, "index.html"));
     });
     app.get("/__debug", (req, res) => {
-      const distDir = path.join(__dirname, "dist");
-      const assetsDir = path.join(distDir, "assets");
       const info = {
         distExists: fs.existsSync(distDir),
         indexExists: fs.existsSync(path.join(distDir, "index.html")),
@@ -301,7 +317,8 @@ async function startServer() {
       res.json(info);
     });
     app.get("*", (req, res) => {
-      res.sendFile(path.join(__dirname, "dist", "index.html"));
+      res.setHeader("Cache-Control", "no-store");
+      res.sendFile(path.join(distDir, "index.html"));
     });
   }
 
