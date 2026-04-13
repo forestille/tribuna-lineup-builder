@@ -71,6 +71,27 @@ const getImageUrlLocalCandidate = (teamName: string, imageUrl: string) => {
   return teamFolder ? `/img/players/${teamFolder}/${encodeURIComponent(raw)}` : `/img/players/${encodeURIComponent(raw)}`;
 };
 
+const getImageCache = () => {
+  const w = window as any;
+  if (!w.__lineupImageCache) w.__lineupImageCache = new Map();
+  return w.__lineupImageCache as Map<string, Promise<HTMLImageElement>>;
+};
+
+const preloadImage = (src: string) => {
+  if (!src) return;
+  const cache = getImageCache();
+  if (cache.has(src)) return;
+  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+  cache.set(src, promise);
+  promise.catch(() => cache.delete(src));
+};
+
 const Thumb = ({
   sources,
   className,
@@ -106,6 +127,23 @@ export default function App() {
   useEffect(() => {
     fetch('/api/backgrounds').then(res => res.json()).then(setBackgrounds);
   }, []);
+
+  useEffect(() => {
+    if (!currentTeam) return;
+    const teamName = currentTeam.name || '';
+    const players = currentTeam.players || [];
+    const sources = players.flatMap(p => {
+      const localCandidates = getLocalCandidates(teamName, p.displayName || p.name);
+      const imageUrlLocal = getImageUrlLocalCandidate(teamName, p.imageUrl || '');
+      const remote = isRemoteUrl(p.imageUrl) ? [p.imageUrl] : [];
+      return [
+        ...localCandidates,
+        ...(imageUrlLocal ? [imageUrlLocal] : []),
+        ...remote,
+      ];
+    });
+    sources.forEach(preloadImage);
+  }, [currentTeam]);
 
   const handleTeamSelect = (team: Team) => {
     const fallbackBg = backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.png`)

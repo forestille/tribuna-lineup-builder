@@ -8,6 +8,13 @@ interface Props {
 
 export default function LineupPreview({ state }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const playersCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const prevBaseKeyRef = useRef<string>('');
+  const prevFormationRef = useRef<string>('');
+  const prevTeamNameRef = useRef<string>('');
+  const prevGlowRef = useRef<string>('');
+  const prevPlayerKeysRef = useRef<Record<string, string>>({});
 
   const ensureFontsLoaded = (() => {
     let cached: Promise<void> | null = null;
@@ -35,146 +42,212 @@ export default function LineupPreview({ state }: Props) {
     const draw = async () => {
       // Ensure custom fonts are loaded before drawing text
       await ensureFontsLoaded();
-      // 1. Background
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
-      if (state.background) {
-        const bgImg = await loadImage(`/img/backgrounds/${state.background}`);
-        ctx.drawImage(bgImg, 0, 0, canvas.width, canvas.height);
-      }
+      const baseCanvas = baseCanvasRef.current || document.createElement('canvas');
+      baseCanvas.width = canvas.width;
+      baseCanvas.height = canvas.height;
+      baseCanvasRef.current = baseCanvas;
+      const baseCtx = baseCanvas.getContext('2d');
 
-      if (!state.possibleLineup) {
-        // 2. Tournament Logo (top-left)
-        let logoCenterX: number | null = null;
-        if (state.tournamentLogo) {
-          try {
-            const tLogo = await loadImage(state.tournamentLogo);
-            const maxH = 137;
-            const maxW = 140;
-            const scale = Math.min(maxH / tLogo.height, maxW / tLogo.width);
-            const width = tLogo.width * scale;
-            const logoH = tLogo.height * scale;
-            const logoX = 70;
-            const logoY = 55 + (137 - logoH) / 2;
-            if (state.tournamentLogoMonochrome) {
-              // White-ify logo
-              const off = document.createElement('canvas');
-              off.width = Math.round(width);
-              off.height = logoH;
-              const octx = off.getContext('2d');
-              if (octx) {
-                octx.clearRect(0, 0, off.width, off.height);
-                octx.drawImage(tLogo, 0, 0, off.width, off.height);
-                octx.globalCompositeOperation = 'source-in';
-                octx.fillStyle = '#ffffff';
-                octx.fillRect(0, 0, off.width, off.height);
-                octx.globalCompositeOperation = 'source-over';
-                ctx.drawImage(off, logoX, logoY, off.width, off.height);
-              } else {
-                ctx.drawImage(tLogo, logoX, logoY, width, logoH);
-              }
-            } else {
-              ctx.drawImage(tLogo, logoX, logoY, width, logoH);
-            }
-            logoCenterX = logoX + width / 2;
-          } catch (e) { console.error("Logo error", e); }
+      const playersCanvas = playersCanvasRef.current || document.createElement('canvas');
+      playersCanvas.width = canvas.width;
+      playersCanvas.height = canvas.height;
+      playersCanvasRef.current = playersCanvas;
+      const playersCtx = playersCanvas.getContext('2d');
+
+      if (!baseCtx || !playersCtx) return;
+
+      const baseKey = JSON.stringify({
+        background: state.background,
+        possibleLineup: state.possibleLineup,
+        possibleLineupText: state.possibleLineupText,
+        tournamentLogo: state.tournamentLogo,
+        tournamentLogoMonochrome: state.tournamentLogoMonochrome,
+        matchday: state.matchday,
+        homeLogo: state.homeLogo,
+        awayLogo: state.awayLogo,
+        subs: state.subs,
+      });
+      const baseDirty = baseKey !== prevBaseKeyRef.current;
+      if (baseDirty) {
+        prevBaseKeyRef.current = baseKey;
+        baseCtx.fillStyle = '#000';
+        baseCtx.fillRect(0, 0, baseCanvas.width, baseCanvas.height);
+
+        if (state.background) {
+          const bgImg = await loadImage(`/img/backgrounds/${state.background}`);
+          baseCtx.drawImage(bgImg, 0, 0, baseCanvas.width, baseCanvas.height);
         }
 
-        // 3. Matchday/Stage (centered under tournament logo) with text background
-        if (state.matchday) {
-          const text = state.matchday;
-          const centerX = (logoCenterX ?? 70);
-          const maxWidth = 380;
-          ctx.font = 'bold 30px "Kelson Sans", sans-serif';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          const lines = wrapText(ctx, text, maxWidth);
-          const lineHeight = 34;
-        const widest = Math.max(
-          ...lines.map(l => ctx.measureText(l).width),
-          220
-        );
-        const textStartY = 225;
-        const startY = textStartY - (lines.length - 1) * (lineHeight / 2);
-        ctx.fillStyle = 'white';
-        lines.forEach((line, i) => {
-          const y = startY + i * lineHeight;
-          ctx.fillText(line, centerX, y);
-        });
-      }
-      } else {
-        // Possible lineup text (left aligned)
-        const text = (state.possibleLineupText || '').trim();
-        if (text) {
-          ctx.fillStyle = 'white';
-          ctx.font = '900 93px "HeadingNowTrial 57 ExtraBold", sans-serif';
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'top';
-          const lines = text.toUpperCase().split('\n');
-          const startX = 50;
-          const startY = 81;
-          const lineHeight = 93;
-          lines.forEach((line, i) => {
-            drawTextWithTracking(ctx, line, startX, startY + i * lineHeight, 20);
+        if (!state.possibleLineup) {
+          let logoCenterX: number | null = null;
+          if (state.tournamentLogo) {
+            try {
+              const tLogo = await loadImage(state.tournamentLogo);
+              const maxH = 137;
+              const maxW = 140;
+              const scale = Math.min(maxH / tLogo.height, maxW / tLogo.width);
+              const width = tLogo.width * scale;
+              const logoH = tLogo.height * scale;
+              const logoX = 70;
+              const logoY = 55 + (137 - logoH) / 2;
+              if (state.tournamentLogoMonochrome) {
+                const off = document.createElement('canvas');
+                off.width = Math.round(width);
+                off.height = logoH;
+                const octx = off.getContext('2d');
+                if (octx) {
+                  octx.clearRect(0, 0, off.width, off.height);
+                  octx.drawImage(tLogo, 0, 0, off.width, off.height);
+                  octx.globalCompositeOperation = 'source-in';
+                  octx.fillStyle = '#ffffff';
+                  octx.fillRect(0, 0, off.width, off.height);
+                  octx.globalCompositeOperation = 'source-over';
+                  baseCtx.drawImage(off, logoX, logoY, off.width, off.height);
+                } else {
+                  baseCtx.drawImage(tLogo, logoX, logoY, width, logoH);
+                }
+              } else {
+                baseCtx.drawImage(tLogo, logoX, logoY, width, logoH);
+              }
+              logoCenterX = logoX + width / 2;
+            } catch (e) { console.error("Logo error", e); }
+          }
+
+          if (state.matchday) {
+            const text = state.matchday;
+            const centerX = (logoCenterX ?? 70);
+            const maxWidth = 380;
+            baseCtx.font = 'bold 30px "Kelson Sans", sans-serif';
+            baseCtx.textAlign = 'center';
+            baseCtx.textBaseline = 'middle';
+            const lines = wrapText(baseCtx, text, maxWidth);
+            const lineHeight = 34;
+            const textStartY = 225;
+            const startY = textStartY - (lines.length - 1) * (lineHeight / 2);
+            baseCtx.fillStyle = 'white';
+            lines.forEach((line, i) => {
+              const y = startY + i * lineHeight;
+              baseCtx.fillText(line, centerX, y);
+            });
+          }
+        } else {
+          const text = (state.possibleLineupText || '').trim();
+          if (text) {
+            baseCtx.fillStyle = 'white';
+            baseCtx.font = '900 93px "HeadingNowTrial 57 ExtraBold", sans-serif';
+            baseCtx.textAlign = 'left';
+            baseCtx.textBaseline = 'top';
+            const lines = text.toUpperCase().split('\n');
+            const startX = 50;
+            const startY = 81;
+            const lineHeight = 93;
+            lines.forEach((line, i) => {
+              drawTextWithTracking(baseCtx, line, startX, startY + i * lineHeight, 20);
+            });
+          }
+        }
+
+        const vsX = canvas.width / 2 + 247;
+        const vsY = 155;
+        if (state.homeLogo) {
+          try {
+            const hLogo = await loadImage(state.homeLogo);
+            const scale = 180 / hLogo.height;
+            const width = hLogo.width * scale;
+            baseCtx.drawImage(hLogo, vsX - 150 - width / 2, 55, width, 180);
+          } catch (e) {}
+        }
+        if (state.awayLogo) {
+          try {
+            const aLogo = await loadImage(state.awayLogo);
+            const scale = 180 / aLogo.height;
+            const width = aLogo.width * scale;
+            baseCtx.drawImage(aLogo, vsX + 150 - width / 2, 55, width, 180);
+          } catch (e) {}
+        }
+        if (state.homeLogo || state.awayLogo) {
+          baseCtx.fillStyle = 'white';
+          baseCtx.font = 'bold 38px "Kelson Sans Bold", sans-serif';
+          baseCtx.textAlign = 'center';
+          baseCtx.fillText('VS', vsX, vsY);
+        }
+
+        if (!state.possibleLineup && state.subs) {
+          try {
+            const subsImg = await loadImage('/img/subs.png');
+            baseCtx.drawImage(subsImg, 115, 1248);
+          } catch (e) {}
+          baseCtx.fillStyle = 'white';
+          baseCtx.font = '28px "Kelson Sans", sans-serif';
+          baseCtx.textAlign = 'left';
+          const subsList = state.subs.split('\n');
+          baseCtx.font = '28px "Kelson Sans", sans-serif';
+          subsList.forEach((sub, i) => {
+            if (i < 10) {
+              drawSubsLine(baseCtx, sub.trim(), 180, 1245 + 35 + (i * 40), 30);
+            }
           });
         }
       }
 
-      // 4. Team Logos + VS (top center)
-      const vsX = canvas.width / 2 + 247;
-      const vsY = 155;
-      if (state.homeLogo) {
-        try {
-          const hLogo = await loadImage(state.homeLogo);
-          const scale = 180 / hLogo.height;
-          const width = hLogo.width * scale;
-          ctx.drawImage(hLogo, vsX - 150 - width / 2, 55, width, 180);
-        } catch (e) {}
-      }
-      if (state.awayLogo) {
-        try {
-          const aLogo = await loadImage(state.awayLogo);
-          const scale = 180 / aLogo.height;
-          const width = aLogo.width * scale;
-          ctx.drawImage(aLogo, vsX + 150 - width / 2, 55, width, 180);
-        } catch (e) {}
-      }
-      if (state.homeLogo || state.awayLogo) {
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 38px "Kelson Sans Bold", sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('VS', vsX, vsY);
-      }
-
-      // 5. Players (glow pass first, then images/tags)
       const positions = FORMATION_POSITIONS[state.formation];
-      for (const pos of positions) {
-        const player = state.players[pos.id];
-        await drawPlayerGlow(ctx, pos.x, pos.y, player);
-      }
-      for (const pos of positions) {
-        const player = state.players[pos.id];
-        await drawPlayerImageAndTag(ctx, pos.x, pos.y, player);
+      const formationChanged = prevFormationRef.current !== state.formation;
+      const teamChanged = prevTeamNameRef.current !== state.teamName;
+      const glowChanged = prevGlowRef.current !== (state.glowColor || '');
+      const rerenderAllPlayers = formationChanged || teamChanged || glowChanged || !prevFormationRef.current;
+
+      prevFormationRef.current = state.formation;
+      prevTeamNameRef.current = state.teamName;
+      prevGlowRef.current = state.glowColor || '';
+
+      const getPlayerKey = (p: Player | null) =>
+        p ? `${p.name}|${p.displayName}|${p.imageUrl}|${p.role}` : '';
+
+      const clearPlayerRegion = (x: number, y: number) => {
+        const width = 420;
+        const height = 380;
+        const left = Math.max(0, Math.round(x - width / 2));
+        const top = Math.max(0, Math.round(y - height + 120));
+        const right = Math.min(canvas.width, left + width);
+        const bottom = Math.min(canvas.height, top + height);
+        playersCtx.clearRect(left, top, right - left, bottom - top);
+      };
+
+      if (rerenderAllPlayers) {
+        playersCtx.clearRect(0, 0, playersCanvas.width, playersCanvas.height);
+        const nextKeys: Record<string, string> = {};
+        for (const pos of positions) {
+          const player = state.players[pos.id];
+          nextKeys[pos.id] = getPlayerKey(player);
+          await drawPlayerGlow(playersCtx, pos.x, pos.y, player);
+        }
+        for (const pos of positions) {
+          const player = state.players[pos.id];
+          await drawPlayerImageAndTag(playersCtx, pos.x, pos.y, player);
+        }
+        prevPlayerKeysRef.current = nextKeys;
+      } else {
+        const nextKeys: Record<string, string> = { ...prevPlayerKeysRef.current };
+        const dirtyPositions = positions.filter(pos => {
+          const key = getPlayerKey(state.players[pos.id]);
+          if (prevPlayerKeysRef.current[pos.id] !== key) {
+            nextKeys[pos.id] = key;
+            return true;
+          }
+          return false;
+        });
+        for (const pos of dirtyPositions) {
+          clearPlayerRegion(pos.x, pos.y);
+          const player = state.players[pos.id];
+          await drawPlayerGlow(playersCtx, pos.x, pos.y, player);
+          await drawPlayerImageAndTag(playersCtx, pos.x, pos.y, player);
+        }
+        prevPlayerKeysRef.current = nextKeys;
       }
 
-      // 6. Subs label (bottom-left)
-      if (!state.possibleLineup && state.subs) {
-        try {
-          const subsImg = await loadImage('/img/subs.png');
-          ctx.drawImage(subsImg, 115, 1248);
-        } catch (e) {}
-        ctx.fillStyle = 'white';
-        ctx.font = '28px "Kelson Sans", sans-serif';
-        ctx.textAlign = 'left';
-        const subsList = state.subs.split('\n');
-        ctx.font = '28px "Kelson Sans", sans-serif';
-        subsList.forEach((sub, i) => {
-          if (i < 10) { // Limit subs display
-            drawSubsLine(ctx, sub.trim(), 180, 1245 + 35 + (i * 40), 30);
-          }
-        });
-      }
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(baseCanvas, 0, 0);
+      ctx.drawImage(playersCanvas, 0, 0);
     };
 
     draw();
