@@ -35,12 +35,18 @@ const slugify = (value: string) =>
   value
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[’'ʼ]/g, '')
+    .replace(/[\u2019\u02BC']/g, '')
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
 
 const isRemoteUrl = (value: string) => /^https?:\/\//i.test(value);
+const normalizeSearch = (value: string) =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[’'ʼ]/g, '')
+    .toLowerCase();
 
 const getLocalCandidates = (teamName: string, displayName: string) => {
   const teamFolder = teamName ? encodeURIComponent(teamName) : '';
@@ -69,27 +75,6 @@ const getImageUrlLocalCandidate = (teamName: string, imageUrl: string) => {
   if (!raw || isRemoteUrl(raw)) return '';
   const teamFolder = teamName ? encodeURIComponent(teamName) : '';
   return teamFolder ? `/img/players/${teamFolder}/${encodeURIComponent(raw)}` : `/img/players/${encodeURIComponent(raw)}`;
-};
-
-const getImageCache = () => {
-  const w = window as any;
-  if (!w.__lineupImageCache) w.__lineupImageCache = new Map();
-  return w.__lineupImageCache as Map<string, Promise<HTMLImageElement>>;
-};
-
-const preloadImage = (src: string) => {
-  if (!src) return;
-  const cache = getImageCache();
-  if (cache.has(src)) return;
-  const promise = new Promise<HTMLImageElement>((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
-  });
-  cache.set(src, promise);
-  promise.catch(() => cache.delete(src));
 };
 
 const Thumb = ({
@@ -128,24 +113,7 @@ export default function App() {
     fetch('/api/backgrounds').then(res => res.json()).then(setBackgrounds);
   }, []);
 
-  useEffect(() => {
-    if (!currentTeam) return;
-    const teamName = currentTeam.name || '';
-    const players = currentTeam.players || [];
-    const sources = players.flatMap(p => {
-      const localCandidates = getLocalCandidates(teamName, p.displayName || p.name);
-      const imageUrlLocal = getImageUrlLocalCandidate(teamName, p.imageUrl || '');
-      const remote = isRemoteUrl(p.imageUrl) ? [p.imageUrl] : [];
-      return [
-        ...localCandidates,
-        ...(imageUrlLocal ? [imageUrlLocal] : []),
-        ...remote,
-      ];
-    });
-    sources.forEach(preloadImage);
-  }, [currentTeam]);
-
-  const handleTeamSelect = (team: Team) => {
+const handleTeamSelect = (team: Team) => {
     const fallbackBg = backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.png`)
       || backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.jpg`)
       || backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.jpeg`)
@@ -157,6 +125,7 @@ export default function App() {
       teamName: team.name,
       players: {},
       subs: '',
+      formation: team.defaultFormation || prev.formation,
       background: team.defaultBackground ?? fallbackBg ?? prev.background,
       glowColor: team.glowColor ?? ''
     }));
@@ -177,9 +146,13 @@ export default function App() {
   const getFilteredPlayers = (role: Player['role'], term: string) => {
     const players = currentTeam?.players || [];
     const filtered = players.filter(p => p.role === role);
-    if (!term.trim()) return filtered;
-    const lower = term.toLowerCase();
-    return filtered.filter(p => p.name.toLowerCase().includes(lower));
+    const normalizedTerm = normalizeSearch(term || '').trim();
+    if (!normalizedTerm) return filtered;
+    return filtered.filter(p => {
+      const name = normalizeSearch(p.name || '');
+      const display = normalizeSearch(p.displayName || '');
+      return name.includes(normalizedTerm) || display.includes(normalizedTerm);
+    });
   };
 
   return (
@@ -192,7 +165,7 @@ export default function App() {
             <p className="text-slate-500">Create professional matchday graphics</p>
           </header>
 
-          <TeamManager onTeamSelect={handleTeamSelect} backgrounds={backgrounds} />
+          <TeamManager onTeamSelect={handleTeamSelect} />
 
           {currentTeam && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">

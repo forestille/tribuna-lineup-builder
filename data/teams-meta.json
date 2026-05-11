@@ -22,5 +22,13 @@
   "Netherlands": {
     "background": "",
     "glowColor": "#ffa800"
+  },
+  "Sporting": {
+    "background": "",
+    "glowColor": "#13650b"
+  },
+  "Atletico": {
+    "background": "atletico.png",
+    "glowColor": "#35157d"
   }
 }

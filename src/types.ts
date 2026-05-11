@@ -10,6 +10,7 @@ export interface Team {
   players: Player[];
   defaultBackground?: string;
   glowColor?: string;
+  defaultFormation?: Formation;
 }
 
 export type Formation = '3-5-2' | '4-2-3-1' | '4-1-2-3' | '3-4-3' | '4-4-2';

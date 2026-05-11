@@ -267,6 +267,50 @@ export default function LineupPreview({ state }: Props) {
     return promise;
   };
 
+  const getVisibleBounds = (img: HTMLImageElement) => {
+    const cache = (window as any).__lineupVisibleBoundsCache || ((window as any).__lineupVisibleBoundsCache = new Map());
+    const key = img.currentSrc || img.src;
+    if (cache.has(key)) return cache.get(key);
+
+    const off = document.createElement('canvas');
+    off.width = img.naturalWidth || img.width;
+    off.height = img.naturalHeight || img.height;
+    const octx = off.getContext('2d', { willReadFrequently: true });
+    if (!octx || off.width === 0 || off.height === 0) {
+      const fallback = { sx: 0, sy: 0, sw: img.width, sh: img.height };
+      cache.set(key, fallback);
+      return fallback;
+    }
+
+    octx.clearRect(0, 0, off.width, off.height);
+    octx.drawImage(img, 0, 0, off.width, off.height);
+    const { data, width, height } = octx.getImageData(0, 0, off.width, off.height);
+
+    let minX = width;
+    let minY = height;
+    let maxX = -1;
+    let maxY = -1;
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const alpha = data[(y * width + x) * 4 + 3];
+        if (alpha > 0) {
+          if (x < minX) minX = x;
+          if (y < minY) minY = y;
+          if (x > maxX) maxX = x;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+
+    const bounds = maxX >= minX && maxY >= minY
+      ? { sx: minX, sy: minY, sw: maxX - minX + 1, sh: maxY - minY + 1 }
+      : { sx: 0, sy: 0, sw: width, sh: height };
+
+    cache.set(key, bounds);
+    return bounds;
+  };
+
   const resolvePlayerImageCandidates = (p: Player | null) => {
     const team = (state.teamName || '').trim();
     const teamFolder = team ? encodeURIComponent(team) : '';
@@ -376,15 +420,20 @@ export default function LineupPreview({ state }: Props) {
     const loaded = await loadCandidateImage(candidates);
     if (!loaded) return;
     const { img, fromDisplay, circlePos } = loaded;
+    const visible = fromDisplay ? getVisibleBounds(img) : null;
 
-    const scale = targetHeight / img.height;
-    const drawW = img.width * scale;
+    const sourceW = visible ? visible.sw : img.width;
+    const sourceH = visible ? visible.sh : img.height;
+    const sourceX = visible ? visible.sx : 0;
+    const sourceY = visible ? visible.sy : 0;
+    const scale = targetHeight / sourceH;
+    const drawW = sourceW * scale;
     const drawH = targetHeight;
     const drawX = x - drawW / 2;
     const drawY = y - drawH + verticalOffset;
     const shrink = 12;
     const imgH = Math.max(0, drawH - shrink);
-    const imgW = img.width * (imgH / img.height);
+    const imgW = sourceW * (imgH / sourceH);
     const imgX = x - imgW / 2;
     const imgY = drawY; // align to circle top
     const drawGlow = (source: HTMLCanvasElement | HTMLImageElement) => {
@@ -393,9 +442,9 @@ export default function LineupPreview({ state }: Props) {
       ctx.shadowOffsetY = 0;
       if (fromDisplay) {
         if (circlePos) {
-          ctx.drawImage(source, imgX, imgY, imgW, imgH);
+          ctx.drawImage(source, sourceX, sourceY, sourceW, sourceH, imgX, imgY, imgW, imgH);
         } else {
-          ctx.drawImage(source, drawX, drawY, drawW, drawH);
+          ctx.drawImage(source, sourceX, sourceY, sourceW, sourceH, drawX, drawY, drawW, drawH);
         }
       } else {
         const radius = drawH / 2;
@@ -424,18 +473,23 @@ export default function LineupPreview({ state }: Props) {
     const loaded = await loadCandidateImage(candidates);
     if (loaded) {
       const { img, fromDisplay, circlePos, circleMask } = loaded;
-      const scale = targetHeight / img.height;
-      const drawW = img.width * scale;
+      const visible = fromDisplay ? getVisibleBounds(img) : null;
+      const sourceW = visible ? visible.sw : img.width;
+      const sourceH = visible ? visible.sh : img.height;
+      const sourceX = visible ? visible.sx : 0;
+      const sourceY = visible ? visible.sy : 0;
+      const scale = targetHeight / sourceH;
+      const drawW = sourceW * scale;
       const drawH = targetHeight;
       const drawX = x - drawW / 2;
       const drawY = y - drawH + verticalOffset;
       if (fromDisplay && !circlePos) {
-        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, drawX, drawY, drawW, drawH);
       } else {
         // Circle stays full size; image slightly smaller inside, aligned to top
         const shrink = 12;
         const imgH = Math.max(0, drawH - shrink);
-        const imgW = img.width * (imgH / img.height);
+        const imgW = sourceW * (imgH / sourceH);
         const imgX = x - imgW / 2;
         const imgY = drawY; // align to circle top
         const radius = drawH / 2;
@@ -447,10 +501,10 @@ export default function LineupPreview({ state }: Props) {
           ctx.fillStyle = 'white';
           ctx.fill();
           ctx.clip();
-          ctx.drawImage(img, imgX, imgY, imgW, imgH);
+          ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, imgX, imgY, imgW, imgH);
           ctx.restore();
         } else {
-          ctx.drawImage(img, imgX, imgY, imgW, imgH);
+          ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, imgX, imgY, imgW, imgH);
         }
       }
     }
