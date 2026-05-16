@@ -122,15 +122,18 @@ const handleTeamSelect = (team: Team) => {
       || backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.webp`)
       || '';
     setCurrentTeam(team);
-    setState(prev => ({
-      ...prev,
-      teamName: team.name,
-      players: {},
-      subs: '',
-      formation: team.defaultFormation || prev.formation,
-      background: team.defaultBackground ?? fallbackBg ?? prev.background,
-      glowColor: team.glowColor ?? ''
-    }));
+    setState(prev => {
+      const sameTeam = prev.teamName === team.name;
+      return {
+        ...prev,
+        teamName: team.name,
+        players: sameTeam ? prev.players : {},
+        subs: sameTeam ? prev.subs : '',
+        formation: sameTeam ? prev.formation : (team.defaultFormation || prev.formation),
+        background: team.defaultBackground ?? fallbackBg ?? prev.background,
+        glowColor: team.glowColor ?? ''
+      };
+    });
     setSearchTerm({});
   };
 
