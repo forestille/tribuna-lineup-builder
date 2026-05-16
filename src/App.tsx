@@ -3,6 +3,7 @@ import { Team, LineupState, Formation, Player } from './types';
 import TeamManager from './components/TeamManager';
 import LineupPreview from './components/LineupPreview';
 import { FORMATIONS, FORMATION_POSITIONS } from './constants';
+import { DEFAULT_LOGO_VALUES } from './defaults';
 import { Layout, Image as ImageIcon, Users, Settings, Download, Search } from 'lucide-react';
 
 const initialState: LineupState = {
@@ -10,11 +11,11 @@ const initialState: LineupState = {
   formation: '4-2-3-1',
   players: {},
   subs: '',
-  tournamentLogo: '',
+  tournamentLogo: DEFAULT_LOGO_VALUES.tournamentLogo,
   tournamentLogoMonochrome: true,
-  matchday: '',
-  homeLogo: '',
-  awayLogo: '',
+  matchday: 'Final',
+  homeLogo: DEFAULT_LOGO_VALUES.homeLogo,
+  awayLogo: DEFAULT_LOGO_VALUES.awayLogo,
   background: '',
   glowColor: '',
   possibleLineup: false,
@@ -105,6 +106,7 @@ const Thumb = ({
 export default function App() {
   const [state, setState] = useState<LineupState>(initialState);
   const [currentTeam, setCurrentTeam] = useState<Team | null>(null);
+  const [includeLinkedTeam, setIncludeLinkedTeam] = useState(false);
   const [backgrounds, setBackgrounds] = useState<string[]>([]);
   const [searchTerm, setSearchTerm] = useState<Record<string, string>>({});
   const [openDropdown, setOpenDropdown] = useState<Record<string, boolean>>({});
@@ -165,7 +167,11 @@ const handleTeamSelect = (team: Team) => {
             <p className="text-slate-500">Create professional matchday graphics</p>
           </header>
 
-          <TeamManager onTeamSelect={handleTeamSelect} />
+          <TeamManager
+            onTeamSelect={handleTeamSelect}
+            includeLinkedTeam={includeLinkedTeam}
+            onIncludeLinkedTeamChange={setIncludeLinkedTeam}
+          />
 
           {currentTeam && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -286,6 +292,16 @@ const handleTeamSelect = (team: Team) => {
                   <Users className="w-5 h-5 text-indigo-600" />
                   Starting Lineup
                 </h2>
+                {currentTeam?.linkedTeam && (
+                  <label className="mb-4 inline-flex items-center gap-2 text-sm text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={includeLinkedTeam}
+                      onChange={(e) => setIncludeLinkedTeam(e.target.checked)}
+                    />
+                    View all players
+                  </label>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {positions.map(pos => (
                     <div key={pos.id} className="relative">

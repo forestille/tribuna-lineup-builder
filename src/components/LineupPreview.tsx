@@ -413,6 +413,8 @@ export default function LineupPreview({ state }: Props) {
   const drawPlayerGlow = async (ctx: CanvasRenderingContext2D, x: number, y: number, player: Player | null) => {
     const candidates = resolvePlayerImageCandidates(player);
     const targetHeight = 180;
+    const localPlayerTargetHeight = 190;
+    const localPlayerYOffset = -10;
     const verticalOffset = 83;
     const glow = (state.glowColor || '').trim();
     if (!glow || candidates.length === 0) return;
@@ -426,11 +428,13 @@ export default function LineupPreview({ state }: Props) {
     const sourceH = visible ? visible.sh : img.height;
     const sourceX = visible ? visible.sx : 0;
     const sourceY = visible ? visible.sy : 0;
-    const scale = targetHeight / sourceH;
+    const effectiveTargetHeight = fromDisplay && !circlePos ? localPlayerTargetHeight : targetHeight;
+    const yOffset = fromDisplay && !circlePos ? localPlayerYOffset : 0;
+    const scale = effectiveTargetHeight / sourceH;
     const drawW = sourceW * scale;
-    const drawH = targetHeight;
+    const drawH = effectiveTargetHeight;
     const drawX = x - drawW / 2;
-    const drawY = y - drawH + verticalOffset;
+    const drawY = y - drawH + verticalOffset + yOffset;
     const shrink = 12;
     const imgH = Math.max(0, drawH - shrink);
     const imgW = sourceW * (imgH / sourceH);
@@ -467,6 +471,8 @@ export default function LineupPreview({ state }: Props) {
   const drawPlayerImageAndTag = async (ctx: CanvasRenderingContext2D, x: number, y: number, player: Player | null) => {
     const candidates = resolvePlayerImageCandidates(player);
     const targetHeight = 180;
+    const localPlayerTargetHeight = 190;
+    const localPlayerYOffset = -10;
     const tagWidth = 223;
     const tagHeight = 37;
     const verticalOffset = 83;
@@ -478,11 +484,13 @@ export default function LineupPreview({ state }: Props) {
       const sourceH = visible ? visible.sh : img.height;
       const sourceX = visible ? visible.sx : 0;
       const sourceY = visible ? visible.sy : 0;
-      const scale = targetHeight / sourceH;
+      const effectiveTargetHeight = fromDisplay && !circlePos ? localPlayerTargetHeight : targetHeight;
+      const yOffset = fromDisplay && !circlePos ? localPlayerYOffset : 0;
+      const scale = effectiveTargetHeight / sourceH;
       const drawW = sourceW * scale;
-      const drawH = targetHeight;
+      const drawH = effectiveTargetHeight;
       const drawX = x - drawW / 2;
-      const drawY = y - drawH + verticalOffset;
+      const drawY = y - drawH + verticalOffset + yOffset;
       if (fromDisplay && !circlePos) {
         ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, drawX, drawY, drawW, drawH);
       } else {

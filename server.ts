@@ -103,7 +103,7 @@ async function startServer() {
   if (!fs.existsSync(teamsDir)) fs.mkdirSync(teamsDir, { recursive: true });
 
   if (!fs.existsSync(metaCsvPath)) {
-    fs.writeFileSync(metaCsvPath, "team,background,glowColor,defaultFormation\n");
+    fs.writeFileSync(metaCsvPath, "team,background,glowColor,defaultFormation,linkedTeam\n");
   }
 
   const legacyPlayersCsvPath = path.join(dataDir, "teams-legacy.csv");
@@ -121,7 +121,9 @@ async function startServer() {
     if (fs.existsSync(migrationMarker)) return;
     const hasTeamFiles = fs.readdirSync(teamsDir).some(f => f.toLowerCase().endsWith('.csv'));
     const metaFirstLine = (fs.readFileSync(metaCsvPath, "utf-8").split("\n")[0] || "").trim();
-    const metaIsNew = metaFirstLine === "team,background,glowColor,defaultFormation";
+    const metaIsNew =
+      metaFirstLine === "team,background,glowColor,defaultFormation" ||
+      metaFirstLine === "team,background,glowColor,defaultFormation,linkedTeam";
     if (hasTeamFiles && metaIsNew) {
       fs.writeFileSync(migrationMarker, new Date().toISOString() + "\n");
       return;
@@ -168,13 +170,14 @@ async function startServer() {
         Object.assign(meta, JSON.parse(fs.readFileSync(legacyMetaJsonPath, "utf-8")));
       } catch {}
     }
-    const outLines = ["team,background,glowColor,defaultFormation"];
+    const outLines = ["team,background,glowColor,defaultFormation,linkedTeam"];
     Object.keys(grouped).forEach(team => {
       outLines.push([
         csvEscape(team),
         csvEscape(String(meta[team]?.background || '')),
         csvEscape(String(meta[team]?.glowColor || '')),
         csvEscape(String(meta[team]?.defaultFormation || '')),
+        csvEscape(String(meta[team]?.linkedTeam || '')),
       ].join(","));
     });
     fs.writeFileSync(metaCsvPath, outLines.join("\n") + "\n");
@@ -194,14 +197,19 @@ async function startServer() {
     const lines = content.split("\n").filter(line => line.trim() !== "");
     if (!lines.length) return { headers: [], rows: [] as any[] };
     const headers = parseCsvLine(lines[0]);
+    const normalizedHeaders = headers.includes('linkedTeam') ? headers : [...headers, 'linkedTeam'];
     const rows = lines.slice(1).map(line => {
       const values = parseCsvLine(line);
-      return headers.reduce((obj, header, i) => {
+      return normalizedHeaders.reduce((obj, header, i) => {
+        if (header === 'linkedTeam' && !headers.includes('linkedTeam')) {
+          obj[header] = '';
+          return obj;
+        }
         obj[header] = values[i] ?? '';
         return obj;
       }, {} as any);
     });
-    return { headers, rows };
+    return { headers: normalizedHeaders, rows };
   };
 
   const readTeamPlayersCsv = (teamName: string) => {
@@ -242,6 +250,7 @@ async function startServer() {
           background: String(row.background || ''),
           glowColor: String(row.glowColor || ''),
           defaultFormation: String(row.defaultFormation || ''),
+          linkedTeam: String(row.linkedTeam || ''),
         };
         return acc;
       }, {});
@@ -279,13 +288,14 @@ async function startServer() {
 
       // Update meta CSV
       const { headers: metaHeaders, rows } = readMetaCsv();
-      const headers = metaHeaders.length ? metaHeaders : parseCsvLine("team,background,glowColor,defaultFormation");
+      const headers = metaHeaders.length ? metaHeaders : parseCsvLine("team,background,glowColor,defaultFormation,linkedTeam");
       const updatedRows = rows.filter((r: any) => String(r.team || '').trim() !== normalizedTeamName);
       updatedRows.push({
         team: normalizedTeamName,
         background: String(background || '').trim(),
         glowColor: String(glowColor || '').trim(),
         defaultFormation: String(defaultFormation || '').trim(),
+        linkedTeam: '',
       });
       const outLines = [headers.join(',')].concat(updatedRows.map(r =>
         headers.map(h => csvEscape(String(r[h] ?? ''))).join(',')
@@ -388,7 +398,7 @@ async function startServer() {
       const { headers, rows } = req.body || {};
       const safeHeaders = Array.isArray(headers) && headers.length
         ? headers
-        : ['team', 'background', 'glowColor', 'defaultFormation'];
+        : ['team', 'background', 'glowColor', 'defaultFormation', 'linkedTeam'];
       const safeRows = Array.isArray(rows) ? rows : [];
       const outLines = [safeHeaders.join(',')].concat(safeRows.map((r: any) =>
         safeHeaders.map(h => csvEscape(String(r?.[h] ?? ''))).join(',')

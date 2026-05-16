@@ -8,6 +8,7 @@ type MetaRow = {
   background: string;
   glowColor: string;
   defaultFormation: string;
+  linkedTeam: string;
 };
 
 type PlayerRow = {
@@ -131,7 +132,7 @@ export default function AdminPanel() {
     await fetch('/api/admin/meta', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ headers: ['team', 'background', 'glowColor', 'defaultFormation'], rows: metaRows }),
+      body: JSON.stringify({ headers: ['team', 'background', 'glowColor', 'defaultFormation', 'linkedTeam'], rows: metaRows }),
     });
     await loadMeta();
     localStorage.setItem('teamsUpdated', String(Date.now()));
@@ -154,7 +155,7 @@ export default function AdminPanel() {
   };
 
   const addTeamRow = () => {
-    setMetaRows(prev => [...prev, { team: '', background: '', glowColor: '', defaultFormation: '' }]);
+    setMetaRows(prev => [...prev, { team: '', background: '', glowColor: '', defaultFormation: '', linkedTeam: '' }]);
   };
 
   const addPlayerRow = () => {
@@ -416,6 +417,7 @@ export default function AdminPanel() {
                   <th className="p-2 border-b">Background</th>
                   <th className="p-2 border-b">Glow</th>
                   <th className="p-2 border-b">Default Formation</th>
+                  <th className="p-2 border-b">Linked Team</th>
                 </tr>
               </thead>
               <tbody>
@@ -448,6 +450,23 @@ export default function AdminPanel() {
                         {FORMATIONS.map(f => (
                           <option key={f} value={f}>{f}</option>
                         ))}
+                      </select>
+                    </td>
+                    <td className="p-2 border-b">
+                      <select
+                        className="w-full border p-1 bg-white"
+                        value={row.linkedTeam}
+                        onChange={e => {
+                          const v = e.target.value;
+                          setMetaRows(prev => prev.map((r, i) => i === idx ? { ...r, linkedTeam: v } : r));
+                        }}
+                      >
+                        <option value="">-</option>
+                        {teams
+                          .filter(team => team !== row.team)
+                          .map(team => (
+                            <option key={team} value={team}>{team}</option>
+                          ))}
                       </select>
                     </td>
                   </tr>

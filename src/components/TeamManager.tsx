@@ -4,13 +4,15 @@ import { Search } from 'lucide-react';
 
 interface Props {
   onTeamSelect: (team: Team) => void;
+  includeLinkedTeam: boolean;
+  onIncludeLinkedTeamChange: (value: boolean) => void;
 }
 
-export default function TeamManager({ onTeamSelect }: Props) {
+export default function TeamManager({ onTeamSelect, includeLinkedTeam, onIncludeLinkedTeamChange }: Props) {
   const [teams, setTeams] = useState<string[]>([]);
   const [allPlayers, setAllPlayers] = useState<any[]>([]);
   const [selectedTeam, setSelectedTeam] = useState('');
-  const [teamMeta, setTeamMeta] = useState<Record<string, { background?: string; glowColor?: string; defaultFormation?: Formation }>>({});
+  const [teamMeta, setTeamMeta] = useState<Record<string, { background?: string; glowColor?: string; defaultFormation?: Formation; linkedTeam?: string }>>({});
 
   useEffect(() => {
     fetchTeams();
@@ -40,17 +42,48 @@ export default function TeamManager({ onTeamSelect }: Props) {
     }
   };
 
-  const handleTeamChange = (name: string) => {
-    setSelectedTeam(name);
-    const teamPlayers = allPlayers.filter(p => p.team === name).map(p => ({
+  const normalizeSearch = (value: string) =>
+    String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[’'ʼ]/g, '')
+      .toLowerCase();
+
+  const mapTeamPlayers = (teamName: string) =>
+    allPlayers.filter(p => p.team === teamName).map(p => ({
       name: p.name,
       displayName: p['display-name'],
       imageUrl: p['image-url'],
       role: (typeof p.role === 'string' && p.role.toLowerCase() === 'goalkeeper') ? 'goalkeeper' : 'outfield'
     }));
-    const meta = teamMeta[name] || {};
-    onTeamSelect({ name, players: teamPlayers, defaultBackground: meta.background, glowColor: meta.glowColor, defaultFormation: meta.defaultFormation });
+
+  const getMergedPlayers = (teamName: string, linkedTeamName?: string) => {
+    const merged = [...mapTeamPlayers(teamName)];
+    if (linkedTeamName) {
+      const seen = new Set(merged.map(player => normalizeSearch(player.displayName || player.name)));
+      for (const player of mapTeamPlayers(linkedTeamName)) {
+        const key = normalizeSearch(player.displayName || player.name);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        merged.push(player);
+      }
+    }
+    return merged;
   };
+
+  useEffect(() => {
+    if (!selectedTeam) return;
+    const meta = teamMeta[selectedTeam] || {};
+    const linkedTeam = includeLinkedTeam ? String(meta.linkedTeam || '').trim() : '';
+    onTeamSelect({
+      name: selectedTeam,
+      players: getMergedPlayers(selectedTeam, linkedTeam || undefined),
+      defaultBackground: meta.background,
+      glowColor: meta.glowColor,
+      defaultFormation: meta.defaultFormation,
+      linkedTeam: meta.linkedTeam,
+    });
+  }, [selectedTeam, includeLinkedTeam, allPlayers, teamMeta]);
 
   return (
     <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 mb-6">
@@ -63,7 +96,10 @@ export default function TeamManager({ onTeamSelect }: Props) {
         <select 
           className="flex-1 p-2 border border-slate-300 rounded-lg bg-slate-50"
           value={selectedTeam}
-          onChange={(e) => handleTeamChange(e.target.value)}
+          onChange={(e) => {
+            setSelectedTeam(e.target.value);
+            onIncludeLinkedTeamChange(false);
+          }}
         >
           <option value="">Select a team...</option>
           {teams.map(t => <option key={t} value={t}>{t}</option>)}
@@ -74,7 +110,6 @@ export default function TeamManager({ onTeamSelect }: Props) {
         >
           Refresh
         </button>
-        <div className="px-4 py-2 text-slate-400 text-sm">Add teams in /admin</div>
       </div>
     </div>
   );
