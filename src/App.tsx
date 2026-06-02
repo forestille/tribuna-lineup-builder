@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Team, LineupState, Formation, Player } from './types';
 import TeamManager from './components/TeamManager';
 import LineupPreview from './components/LineupPreview';
+import LogoSelectField, { type LogoOption } from './components/LogoSelectField';
 import { FORMATIONS, FORMATION_POSITIONS } from './constants';
 import { DEFAULT_LOGO_VALUES } from './defaults';
 import { Layout, Image as ImageIcon, Users, Settings, Download, Search } from 'lucide-react';
@@ -104,16 +105,28 @@ const Thumb = ({
 };
 
 export default function App() {
+  const isWorldCupMode = window.location.pathname.startsWith('/world-cup');
+  const logoApiBase = isWorldCupMode ? '/api/world-cup' : '/api';
   const [state, setState] = useState<LineupState>(initialState);
   const [currentTeam, setCurrentTeam] = useState<Team | null>(null);
   const [includeLinkedTeam, setIncludeLinkedTeam] = useState(false);
   const [backgrounds, setBackgrounds] = useState<string[]>([]);
+  const [tournamentLogoOptions, setTournamentLogoOptions] = useState<LogoOption[]>([]);
+  const [teamLogoOptions, setTeamLogoOptions] = useState<LogoOption[]>([]);
   const [searchTerm, setSearchTerm] = useState<Record<string, string>>({});
   const [openDropdown, setOpenDropdown] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     fetch('/api/backgrounds').then(res => res.json()).then(setBackgrounds);
-  }, []);
+    fetch(`${logoApiBase}/logo-options/tournament`)
+      .then(res => res.json())
+      .then(data => setTournamentLogoOptions(Array.isArray(data.options) ? data.options : []))
+      .catch(() => setTournamentLogoOptions([]));
+    fetch(`${logoApiBase}/logo-options/team`)
+      .then(res => res.json())
+      .then(data => setTeamLogoOptions(Array.isArray(data.options) ? data.options : []))
+      .catch(() => setTeamLogoOptions([]));
+  }, [logoApiBase]);
 
 const handleTeamSelect = (team: Team) => {
     const fallbackBg = backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.png`)
@@ -230,13 +243,12 @@ const handleTeamSelect = (team: Team) => {
                   {!state.possibleLineup && (
                     <>
                       <div>
-                        <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Tournament Logo URL</label>
-                        <input 
-                          type="text" 
-                          className="w-full p-2 border border-slate-300 rounded-lg"
+                        <LogoSelectField
+                          label="Tournament Logo"
+                          options={tournamentLogoOptions}
                           value={state.tournamentLogo}
-                          onChange={(e) => setState(prev => ({ ...prev, tournamentLogo: e.target.value }))}
-                          placeholder="https://..."
+                          onChange={(value) => setState(prev => ({ ...prev, tournamentLogo: value }))}
+                          placeholder="Search tournament logos..."
                         />
                         <label className="mt-2 flex items-center gap-2 text-sm text-slate-600">
                           <input
@@ -268,21 +280,21 @@ const handleTeamSelect = (team: Team) => {
                   )}
                   <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Home Team Logo URL</label>
-                      <input 
-                        type="text" 
-                        className="w-full p-2 border border-slate-300 rounded-lg"
+                      <LogoSelectField
+                        label="Home Team Logo"
+                        options={teamLogoOptions}
                         value={state.homeLogo}
-                        onChange={(e) => setState(prev => ({ ...prev, homeLogo: e.target.value }))}
+                        onChange={(value) => setState(prev => ({ ...prev, homeLogo: value }))}
+                        placeholder="Search team logos..."
                       />
                     </div>
                     <div>
-                      <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Away Team Logo URL</label>
-                      <input 
-                        type="text" 
-                        className="w-full p-2 border border-slate-300 rounded-lg"
+                      <LogoSelectField
+                        label="Away Team Logo"
+                        options={teamLogoOptions}
                         value={state.awayLogo}
-                        onChange={(e) => setState(prev => ({ ...prev, awayLogo: e.target.value }))}
+                        onChange={(value) => setState(prev => ({ ...prev, awayLogo: value }))}
+                        placeholder="Search team logos..."
                       />
                     </div>
                   </div>

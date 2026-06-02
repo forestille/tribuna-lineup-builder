@@ -9,6 +9,7 @@ import os from "os";
 import { existsSync } from "fs";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import type { Request } from "express";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -91,13 +92,19 @@ async function startServer() {
 
   // Ensure directories exist
   const dataDir = path.join(__dirname, "data");
+  const worldCupDataDir = path.join(dataDir, "world-cup");
   const imgDir = path.join(__dirname, "public", "img");
   const bgDir = path.join(imgDir, "backgrounds");
   const playersUefaDir = path.join(imgDir, "players-uefa");
   const teamsDir = path.join(dataDir, "teams");
   const metaCsvPath = path.join(dataDir, "teams.csv");
+  const tournamentLogosCsvPath = path.join(dataDir, "tournament-logos.csv");
+  const teamLogosCsvPath = path.join(dataDir, "team-logos.csv");
+  const worldCupTournamentLogosCsvPath = path.join(worldCupDataDir, "tournament-logos.csv");
+  const worldCupTeamLogosCsvPath = path.join(worldCupDataDir, "team-logos.csv");
   
   if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+  if (!fs.existsSync(worldCupDataDir)) fs.mkdirSync(worldCupDataDir, { recursive: true });
   if (!fs.existsSync(bgDir)) fs.mkdirSync(bgDir, { recursive: true });
   if (!fs.existsSync(playersUefaDir)) fs.mkdirSync(playersUefaDir, { recursive: true });
   if (!fs.existsSync(teamsDir)) fs.mkdirSync(teamsDir, { recursive: true });
@@ -105,6 +112,48 @@ async function startServer() {
   if (!fs.existsSync(metaCsvPath)) {
     fs.writeFileSync(metaCsvPath, "team,background,glowColor,defaultFormation,linkedTeam\n");
   }
+
+  const ensureLogoCsv = (filePath: string, seedRows: Array<{ name: string; url: string }>) => {
+    if (fs.existsSync(filePath)) return;
+    const lines = ["name,url"].concat(
+      seedRows.map(row => [csvEscape(row.name), csvEscape(row.url)].join(","))
+    );
+    fs.writeFileSync(filePath, lines.join("\n") + "\n");
+  };
+
+  // Placeholder seed data for now; the actual curation/sorting can be refined later.
+  ensureLogoCsv(tournamentLogosCsvPath, [
+    {
+      name: "Premier League 2",
+      url: "https://contentfulproxy.stadion.io/zl2jjr3puakk/1nFivy1O9BbfODq1UOk1cI/f098e4d07583c5ae9b0569b243c9971f/Premier_League_2.png",
+    },
+  ]);
+  ensureLogoCsv(teamLogosCsvPath, [
+    {
+      name: "Brighton & Hove Albion",
+      url: "https://upload.wikimedia.org/wikipedia/ru/thumb/2/24/FC_Brighton_%26_Hove_Albion_Logo.svg/1280px-FC_Brighton_%26_Hove_Albion_Logo.svg.png",
+    },
+    {
+      name: "Manchester United",
+      url: "https://upload.wikimedia.org/wikipedia/sco/thumb/7/7a/Manchester_United_FC_crest.svg/3840px-Manchester_United_FC_crest.svg.png",
+    },
+  ]);
+  ensureLogoCsv(worldCupTournamentLogosCsvPath, [
+    {
+      name: "World Cup Placeholder",
+      url: "https://contentfulproxy.stadion.io/zl2jjr3puakk/1nFivy1O9BbfODq1UOk1cI/f098e4d07583c5ae9b0569b243c9971f/Premier_League_2.png",
+    },
+  ]);
+  ensureLogoCsv(worldCupTeamLogosCsvPath, [
+    {
+      name: "Spain Placeholder",
+      url: "https://upload.wikimedia.org/wikipedia/ru/thumb/2/24/FC_Brighton_%26_Hove_Albion_Logo.svg/1280px-FC_Brighton_%26_Hove_Albion_Logo.svg.png",
+    },
+    {
+      name: "World Cup Team Placeholder",
+      url: "https://upload.wikimedia.org/wikipedia/sco/thumb/7/7a/Manchester_United_FC_crest.svg/3840px-Manchester_United_FC_crest.svg.png",
+    },
+  ]);
 
   const legacyPlayersCsvPath = path.join(dataDir, "teams-legacy.csv");
   const legacyMetaJsonPath = path.join(dataDir, "teams-meta.json");
@@ -226,6 +275,36 @@ async function startServer() {
         return obj;
       }, {} as any);
     });
+  };
+
+  const readSimpleNameUrlCsv = (filePath: string) => {
+    if (!fs.existsSync(filePath)) return [] as Array<{ name: string; url: string }>;
+    const content = fs.readFileSync(filePath, "utf-8");
+    const lines = content.split("\n").filter(line => line.trim() !== "");
+    if (!lines.length) return [];
+    const headers = parseCsvLine(lines[0]);
+    return lines.slice(1).map(line => {
+      const values = parseCsvLine(line);
+      const row = headers.reduce((obj, header, i) => {
+        obj[header] = values[i] ?? '';
+        return obj;
+      }, {} as Record<string, string>);
+      return {
+        name: String(row.name || '').trim(),
+        url: String(row.url || '').trim(),
+      };
+    }).filter(row => row.name && row.url);
+  };
+
+  const getModeFromRequest = (req: Request): "uefa" | "world-cup" => {
+    return req.path.startsWith("/api/world-cup/") ? "world-cup" : "uefa";
+  };
+
+  const getLogoCsvPath = (mode: "uefa" | "world-cup", kind: "tournament" | "team") => {
+    if (mode === "world-cup") {
+      return kind === "tournament" ? worldCupTournamentLogosCsvPath : worldCupTeamLogosCsvPath;
+    }
+    return kind === "tournament" ? tournamentLogosCsvPath : teamLogosCsvPath;
   };
 
   app.get("/api/teams", (req, res) => {
@@ -383,6 +462,24 @@ async function startServer() {
       res.json([]);
     }
   });
+
+  const handleGetLogoOptions = (req: Request, res: express.Response) => {
+    const kind = req.params.kind === "team" ? "team" : req.params.kind === "tournament" ? "tournament" : "";
+    if (!kind) {
+      return res.status(400).json({ error: "Invalid logo kind" });
+    }
+    try {
+      const mode = getModeFromRequest(req);
+      const options = readSimpleNameUrlCsv(getLogoCsvPath(mode, kind));
+      res.json({ options });
+    } catch (error) {
+      console.error("Failed to read logo options:", error);
+      res.status(500).json({ error: "Failed to read logo options" });
+    }
+  };
+
+  app.get("/api/logo-options/:kind", handleGetLogoOptions);
+  app.get("/api/world-cup/logo-options/:kind", handleGetLogoOptions);
 
   app.get("/api/admin/meta", (req, res) => {
     try {
