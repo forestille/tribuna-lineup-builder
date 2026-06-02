@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { FORMATIONS } from '../constants';
-import { Formation, Player } from '../types';
-import { parseUEFAHtml } from '../services/parser';
+import { AppMode, Formation, Player } from '../types';
+import { parseFifaHtml, parseUEFAHtml } from '../services/parser';
+import { COMPETITION_CONFIG } from '../competitionConfig';
 
 type MetaRow = {
   team: string;
@@ -30,7 +31,12 @@ const normalizeSearch = (value: string) =>
     .replace(/[\u2019\u02BC']/g, '')
     .toLowerCase();
 
-export default function AdminPanel() {
+type Props = {
+  mode: AppMode;
+};
+
+export default function AdminPanel({ mode }: Props) {
+  const config = COMPETITION_CONFIG[mode];
   const [metaRows, setMetaRows] = useState<MetaRow[]>([]);
   const [metaLoading, setMetaLoading] = useState(false);
   const [teamName, setTeamName] = useState('');
@@ -59,7 +65,7 @@ export default function AdminPanel() {
   const loadMeta = async () => {
     setMetaLoading(true);
     try {
-      const res = await fetch('/api/admin/meta');
+      const res = await fetch(`${config.apiBase}/admin/meta`);
       const data = await res.json();
       setMetaRows((data.rows || []) as MetaRow[]);
     } finally {
@@ -71,7 +77,7 @@ export default function AdminPanel() {
     if (!team) return;
     setPlayersLoading(true);
     try {
-      const res = await fetch(`/api/admin/teams/${encodeURIComponent(team)}/players`);
+      const res = await fetch(`${config.apiBase}/admin/teams/${encodeURIComponent(team)}/players`);
       const data = await res.json();
       setTeamPlayers((data.rows || []) as PlayerRow[]);
     } finally {
@@ -93,8 +99,8 @@ export default function AdminPanel() {
   useEffect(() => {
     loadMeta();
     loadFiles('');
-    fetch('/api/backgrounds').then(res => res.json()).then(setBackgrounds);
-  }, []);
+    fetch(config.backgroundsApiPath).then(res => res.json()).then(setBackgrounds);
+  }, [mode]);
 
   useEffect(() => {
     if (teamName) loadPlayers(teamName);
@@ -129,7 +135,7 @@ export default function AdminPanel() {
   };
 
   const saveMeta = async () => {
-    await fetch('/api/admin/meta', {
+    await fetch(`${config.apiBase}/admin/meta`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ headers: ['team', 'background', 'glowColor', 'defaultFormation', 'linkedTeam'], rows: metaRows }),
@@ -145,12 +151,32 @@ export default function AdminPanel() {
       return;
     }
     setErrors([]);
-    await fetch(`/api/admin/teams/${encodeURIComponent(teamName)}/players`, {
+    await fetch(`${config.apiBase}/admin/teams/${encodeURIComponent(teamName)}/players`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rows: teamPlayers }),
     });
     await loadPlayers(teamName);
+    localStorage.setItem('teamsUpdated', String(Date.now()));
+  };
+
+  const deleteTeam = async (team: string) => {
+    const normalizedTeam = team.trim();
+    if (!normalizedTeam) return;
+    const confirmed = window.confirm(`Delete "${normalizedTeam}" and all related player images?`);
+    if (!confirmed) return;
+
+    await fetch(`${config.apiBase}/admin/teams/${encodeURIComponent(normalizedTeam)}/delete`, {
+      method: 'POST',
+    });
+
+    if (teamName === normalizedTeam) {
+      setTeamName('');
+      setTeamPlayers([]);
+    }
+
+    setMetaRows(prev => prev.filter(row => row.team.trim() !== normalizedTeam));
+    await loadMeta();
     localStorage.setItem('teamsUpdated', String(Date.now()));
   };
 
@@ -182,7 +208,7 @@ export default function AdminPanel() {
   };
 
   const handleParse = () => {
-    const players = parseUEFAHtml(htmlInput);
+    const players = mode === 'world-cup' ? parseFifaHtml(htmlInput) : parseUEFAHtml(htmlInput);
     setParsedPlayers(players);
     setParseErrors([]);
   };
@@ -196,12 +222,12 @@ export default function AdminPanel() {
       );
       return;
     }
-    const doPreprocess = preprocessUefa;
+    const doPreprocess = mode === 'world-cup' || preprocessUefa;
     if (doPreprocess) {
-      setPreprocessStatus('Starting...');
+      setPreprocessStatus(mode === 'world-cup' ? 'Downloading portraits...' : 'Starting...');
       setIsPreprocessing(true);
     }
-    const res = await fetch('/api/save-team', {
+    const res = await fetch(`${config.apiBase}/save-team`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -210,7 +236,7 @@ export default function AdminPanel() {
         background: defaultBackground,
         glowColor,
         defaultFormation,
-        preprocessUefa: doPreprocess
+        preprocessUefa: mode === 'world-cup' ? false : doPreprocess
       }),
     });
 
@@ -244,7 +270,7 @@ export default function AdminPanel() {
             try {
               const evt = JSON.parse(line);
               if (evt.type === 'progress') {
-                setPreprocessStatus(`${evt.current}/${evt.total}`);
+                setPreprocessStatus(mode === 'world-cup' ? `Downloading portraits ${evt.current}/${evt.total}` : `${evt.current}/${evt.total}`);
               }
               if (evt.type === 'error') {
                 setPreprocessStatus(`Error: ${evt.player || ''} ${evt.current}/${evt.total}`);
@@ -286,7 +312,7 @@ export default function AdminPanel() {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <div className="max-w-6xl mx-auto p-6 space-y-8">
-        <h1 className="text-2xl font-bold">Admin Panel</h1>
+        <h1 className="text-2xl font-bold">{config.title} Admin</h1>
 
         <section className="bg-white rounded-xl p-4 border border-slate-200">
           <div className="flex items-center justify-between mb-3">
@@ -344,7 +370,7 @@ export default function AdminPanel() {
             </div>
           </div>
           <div className="mb-4">
-            <label className="block text-sm font-medium text-slate-700 mb-2">Paste UEFA Squad HTML Source</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">{config.importLabel}</label>
             <textarea
               className="w-full h-32 p-3 border border-slate-300 rounded-lg font-mono text-xs bg-slate-50"
               value={htmlInput}
@@ -353,17 +379,23 @@ export default function AdminPanel() {
             <button className="mt-2 px-4 py-2 bg-slate-800 text-white rounded-lg" onClick={handleParse}>
               Parse Players
             </button>
-            <div className="mt-3 flex items-start gap-2">
-              <input
-                id="admin-preprocess-uefa"
-                type="checkbox"
-                checked={preprocessUefa}
-                onChange={(e) => setPreprocessUefa(e.target.checked)}
-              />
-              <label htmlFor="admin-preprocess-uefa" className="text-sm text-slate-600">
-                Run AI background removal and save to <span className="font-mono">/public/img/players-uefa/&lt;TEAM&gt;</span>
-              </label>
-            </div>
+            {mode === 'world-cup' ? (
+              <div className="mt-3 text-sm text-slate-600">
+                Portraits will be downloaded automatically to <span className="font-mono">/public/img/{config.preprocessFolder}/&lt;TEAM&gt;</span>, with FIFA quality forced to 100 and the lower 40% cropped off.
+              </div>
+            ) : (
+              <div className="mt-3 flex items-start gap-2">
+                <input
+                  id="admin-preprocess-uefa"
+                  type="checkbox"
+                  checked={preprocessUefa}
+                  onChange={(e) => setPreprocessUefa(e.target.checked)}
+                />
+                <label htmlFor="admin-preprocess-uefa" className="text-sm text-slate-600">
+                  Run AI background removal and save to <span className="font-mono">/public/img/{config.preprocessFolder}/&lt;TEAM&gt;</span>
+                </label>
+              </div>
+            )}
             {preprocessStatus && (
               <div className="mt-2 text-sm text-slate-500">Processing: {preprocessStatus}</div>
             )}
@@ -418,6 +450,7 @@ export default function AdminPanel() {
                   <th className="p-2 border-b">Glow</th>
                   <th className="p-2 border-b">Default Formation</th>
                   <th className="p-2 border-b">Linked Team</th>
+                  <th className="p-2 border-b">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -466,8 +499,17 @@ export default function AdminPanel() {
                           .filter(team => team !== row.team)
                           .map(team => (
                             <option key={team} value={team}>{team}</option>
-                          ))}
+                        ))}
                       </select>
+                    </td>
+                    <td className="p-2 border-b align-top">
+                      <button
+                        className="px-2 py-1 rounded bg-red-50 text-red-700 text-xs border border-red-200 disabled:opacity-50"
+                        disabled={!row.team.trim()}
+                        onClick={() => deleteTeam(row.team)}
+                      >
+                        Delete
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -548,7 +590,7 @@ export default function AdminPanel() {
             <button className="px-3 py-1 rounded bg-indigo-600 text-white text-sm" onClick={() => loadFiles(filePath)} disabled={fileLoading}>Refresh</button>
           </div>
           <div className="flex gap-3 items-center mb-3">
-            <input className="border p-2 flex-1" placeholder="Path inside /public/img (e.g. players-uefa/Italy)" value={filePath} onChange={e => setFilePath(e.target.value)} />
+            <input className="border p-2 flex-1" placeholder={`Path inside /public/img (e.g. ${config.preprocessFolder}/Italy)`} value={filePath} onChange={e => setFilePath(e.target.value)} />
             <button className="px-3 py-2 rounded bg-slate-800 text-white text-sm" onClick={() => loadFiles(filePath)}>Open</button>
           </div>
           <div className="border rounded p-2 mb-3 text-sm bg-slate-50">
@@ -592,7 +634,7 @@ export default function AdminPanel() {
             ))}
           </div>
           <div className="flex gap-3 items-center">
-            <input className="border p-2" placeholder="Target path (e.g. players-uefa/Italy)" value={uploadTarget} onChange={e => setUploadTarget(e.target.value)} />
+            <input className="border p-2" placeholder={`Target path (e.g. ${config.preprocessFolder}/Italy)`} value={uploadTarget} onChange={e => setUploadTarget(e.target.value)} />
             <input type="file" onChange={e => setUploadFile(e.target.files?.[0] || null)} />
             <button className="px-3 py-2 rounded bg-indigo-600 text-white text-sm" onClick={handleUpload} disabled={!uploadFile}>Upload</button>
           </div>

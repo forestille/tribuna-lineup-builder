@@ -1,14 +1,17 @@
 import { useState, useEffect } from 'react';
-import { Formation, Team } from '../types';
+import { AppMode, Formation, Team } from '../types';
 import { Search } from 'lucide-react';
+import { COMPETITION_CONFIG } from '../competitionConfig';
 
 interface Props {
+  mode: AppMode;
   onTeamSelect: (team: Team) => void;
   includeLinkedTeam: boolean;
   onIncludeLinkedTeamChange: (value: boolean) => void;
 }
 
-export default function TeamManager({ onTeamSelect, includeLinkedTeam, onIncludeLinkedTeamChange }: Props) {
+export default function TeamManager({ mode, onTeamSelect, includeLinkedTeam, onIncludeLinkedTeamChange }: Props) {
+  const config = COMPETITION_CONFIG[mode];
   const [teams, setTeams] = useState<string[]>([]);
   const [allPlayers, setAllPlayers] = useState<any[]>([]);
   const [selectedTeam, setSelectedTeam] = useState('');
@@ -26,11 +29,11 @@ export default function TeamManager({ onTeamSelect, includeLinkedTeam, onInclude
       window.removeEventListener('focus', onFocus);
       window.removeEventListener('storage', onStorage);
     };
-  }, []);
+  }, [mode]);
 
   const fetchTeams = async () => {
     try {
-      const res = await fetch('/api/teams');
+      const res = await fetch(`${config.apiBase}/teams`);
       if (!res.ok) throw new Error('Failed to load teams');
       const data = await res.json();
       setTeams(Array.isArray(data.teams) ? data.teams : []);

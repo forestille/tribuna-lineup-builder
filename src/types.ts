@@ -5,6 +5,8 @@ export interface Player {
   role: 'goalkeeper' | 'outfield';
 }
 
+export type AppMode = 'uefa' | 'world-cup';
+
 export interface Team {
   name: string;
   players: Player[];
