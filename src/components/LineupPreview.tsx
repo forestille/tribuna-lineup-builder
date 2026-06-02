@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react';
-import { LineupState, Player } from '../types';
+import { LineupState, Player, AppMode } from '../types';
 import { FORMATION_POSITIONS } from '../constants';
 
 interface Props {
   state: LineupState;
+  mode: AppMode;
 }
 
-export default function LineupPreview({ state }: Props) {
+export default function LineupPreview({ state, mode }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const playersCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -316,6 +317,10 @@ export default function LineupPreview({ state }: Props) {
     const teamFolder = team ? encodeURIComponent(team) : '';
     const candidates: Array<{ url: string; fromDisplay: boolean; circlePos: boolean; circleMask: boolean }> = [];
     const seen = new Set<string>();
+    const localFolders =
+      mode === 'world-cup'
+        ? ['/img/players-world-cup', '/img/players']
+        : ['/img/players-uefa', '/img/players'];
     const addCandidate = (url: string, fromDisplay: boolean, circlePos: boolean, circleMask: boolean) => {
       if (!url || seen.has(url)) return;
       seen.add(url);
@@ -346,19 +351,14 @@ export default function LineupPreview({ state }: Props) {
       const bases = buildNameBases(name);
       const exts = ['png', 'webp', 'jpg', 'jpeg'];
       bases.forEach(base => {
-        exts.forEach(ext => {
-          const url = teamFolder
-            ? `/img/players/${teamFolder}/${encodeURIComponent(base)}.${ext}`
-            : `/img/players/${encodeURIComponent(base)}.${ext}`;
-          addCandidate(url, true, false, false);
+        localFolders.forEach(folder => {
+          exts.forEach(ext => {
+            const url = teamFolder
+              ? `${folder}/${teamFolder}/${encodeURIComponent(base)}.${ext}`
+              : `${folder}/${encodeURIComponent(base)}.${ext}`;
+            addCandidate(url, true, false, false);
+          });
         });
-      });
-      // players-uefa (glow like display, position like image-url)
-      bases.forEach(base => {
-        const url = teamFolder
-          ? `/img/players-uefa/${teamFolder}/${encodeURIComponent(base)}.png`
-          : `/img/players-uefa/${encodeURIComponent(base)}.png`;
-        addCandidate(url, true, true, false);
       });
     }
 

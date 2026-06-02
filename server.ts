@@ -89,26 +89,81 @@ async function startServer() {
     return "python3";
   };
 
-  // Ensure directories exist
-  const dataDir = path.join(__dirname, "data");
+  const toFifaQuality100Url = (rawUrl: string) => {
+    try {
+      const url = new URL(rawUrl);
+      const io = url.searchParams.get("io");
+      if (io) {
+        const cleanedIo = io
+          .replace(/,?aspectratio:1x1,?/g, ",")
+          .replace(/,{2,}/g, ",")
+          .replace(/,$/, "");
+        url.searchParams.set("io", cleanedIo);
+      }
+      url.searchParams.set("quality", "100");
+      return url.toString();
+    } catch {
+      return rawUrl;
+    }
+  };
+
+  const cropWorldCupPortrait = async (inputPath: string, outputPath: string) => {
+    const cropScript = path.join(__dirname, "scripts", "crop_world_cup.py");
+    const pythonBin = "/Users/forestille/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3";
+    await execFileAsync(pythonBin, [cropScript, inputPath, outputPath]);
+  };
+
+  type Mode = "uefa" | "world-cup";
+  type Dataset = {
+    mode: Mode;
+    dataDir: string;
+    teamsDir: string;
+    metaCsvPath: string;
+    playersImageDir: string;
+  };
+
+  const rootDataDir = path.join(__dirname, "data");
   const imgDir = path.join(__dirname, "public", "img");
   const bgDir = path.join(imgDir, "backgrounds");
-  const playersUefaDir = path.join(imgDir, "players-uefa");
-  const teamsDir = path.join(dataDir, "teams");
-  const metaCsvPath = path.join(dataDir, "teams.csv");
-  
-  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+  const datasetByMode: Record<Mode, Dataset> = {
+    uefa: {
+      mode: "uefa",
+      dataDir: rootDataDir,
+      teamsDir: path.join(rootDataDir, "teams"),
+      metaCsvPath: path.join(rootDataDir, "teams.csv"),
+      playersImageDir: path.join(imgDir, "players-uefa"),
+    },
+    "world-cup": {
+      mode: "world-cup",
+      dataDir: path.join(rootDataDir, "world-cup"),
+      teamsDir: path.join(rootDataDir, "world-cup", "teams"),
+      metaCsvPath: path.join(rootDataDir, "world-cup", "teams.csv"),
+      playersImageDir: path.join(imgDir, "players-world-cup"),
+    },
+  };
+
+  const ensureDataset = (dataset: Dataset) => {
+    if (!fs.existsSync(dataset.dataDir)) fs.mkdirSync(dataset.dataDir, { recursive: true });
+    if (!fs.existsSync(dataset.teamsDir)) fs.mkdirSync(dataset.teamsDir, { recursive: true });
+    if (!fs.existsSync(dataset.playersImageDir)) fs.mkdirSync(dataset.playersImageDir, { recursive: true });
+    if (!fs.existsSync(dataset.metaCsvPath)) {
+      fs.writeFileSync(dataset.metaCsvPath, "team,background,glowColor,defaultFormation,linkedTeam\n");
+    }
+  };
+
+  if (!fs.existsSync(imgDir)) fs.mkdirSync(imgDir, { recursive: true });
   if (!fs.existsSync(bgDir)) fs.mkdirSync(bgDir, { recursive: true });
-  if (!fs.existsSync(playersUefaDir)) fs.mkdirSync(playersUefaDir, { recursive: true });
-  if (!fs.existsSync(teamsDir)) fs.mkdirSync(teamsDir, { recursive: true });
+  ensureDataset(datasetByMode.uefa);
+  ensureDataset(datasetByMode["world-cup"]);
 
-  if (!fs.existsSync(metaCsvPath)) {
-    fs.writeFileSync(metaCsvPath, "team,background,glowColor,defaultFormation,linkedTeam\n");
-  }
+  const getModeFromRequest = (req: express.Request): Mode =>
+    req.path.startsWith("/api/world-cup/") || req.query.mode === "world-cup" ? "world-cup" : "uefa";
+  const getDatasetFromRequest = (req: express.Request) => datasetByMode[getModeFromRequest(req)];
 
-  const legacyPlayersCsvPath = path.join(dataDir, "teams-legacy.csv");
-  const legacyMetaJsonPath = path.join(dataDir, "teams-meta.json");
-  const migrationMarker = path.join(dataDir, ".migrated-v2");
+  const legacyPlayersCsvPath = path.join(rootDataDir, "teams-legacy.csv");
+  const legacyMetaJsonPath = path.join(rootDataDir, "teams-meta.json");
+  const migrationMarker = path.join(rootDataDir, ".migrated-v2");
 
   const isLegacyPlayersCsv = (filePath: string) => {
     if (!fs.existsSync(filePath)) return false;
@@ -118,9 +173,10 @@ async function startServer() {
   };
 
   const migrateLegacyIfNeeded = () => {
+    const dataset = datasetByMode.uefa;
     if (fs.existsSync(migrationMarker)) return;
-    const hasTeamFiles = fs.readdirSync(teamsDir).some(f => f.toLowerCase().endsWith('.csv'));
-    const metaFirstLine = (fs.readFileSync(metaCsvPath, "utf-8").split("\n")[0] || "").trim();
+    const hasTeamFiles = fs.readdirSync(dataset.teamsDir).some(f => f.toLowerCase().endsWith('.csv'));
+    const metaFirstLine = (fs.readFileSync(dataset.metaCsvPath, "utf-8").split("\n")[0] || "").trim();
     const metaIsNew =
       metaFirstLine === "team,background,glowColor,defaultFormation" ||
       metaFirstLine === "team,background,glowColor,defaultFormation,linkedTeam";
@@ -128,7 +184,7 @@ async function startServer() {
       fs.writeFileSync(migrationMarker, new Date().toISOString() + "\n");
       return;
     }
-    const legacySourcePath = isLegacyPlayersCsv(metaCsvPath) ? metaCsvPath : (isLegacyPlayersCsv(legacyPlayersCsvPath) ? legacyPlayersCsvPath : "");
+    const legacySourcePath = isLegacyPlayersCsv(dataset.metaCsvPath) ? dataset.metaCsvPath : (isLegacyPlayersCsv(legacyPlayersCsvPath) ? legacyPlayersCsvPath : "");
     if (!legacySourcePath) return;
 
     const content = fs.readFileSync(legacySourcePath, "utf-8");
@@ -152,7 +208,7 @@ async function startServer() {
     });
 
     Object.entries(grouped).forEach(([team, players]) => {
-      const teamCsvPath = path.join(teamsDir, `${team}.csv`);
+      const teamCsvPath = path.join(dataset.teamsDir, `${team}.csv`);
       const teamHeaders = "name,display-name,image-url,role";
       const teamLines = players.map(p => [
         csvEscape(String(p.name || '')),
@@ -180,9 +236,9 @@ async function startServer() {
         csvEscape(String(meta[team]?.linkedTeam || '')),
       ].join(","));
     });
-    fs.writeFileSync(metaCsvPath, outLines.join("\n") + "\n");
+    fs.writeFileSync(dataset.metaCsvPath, outLines.join("\n") + "\n");
 
-    if (legacySourcePath === metaCsvPath) {
+    if (legacySourcePath === dataset.metaCsvPath) {
       fs.writeFileSync(legacyPlayersCsvPath, content);
     }
 
@@ -192,8 +248,8 @@ async function startServer() {
   migrateLegacyIfNeeded();
 
   // API Routes
-  const readMetaCsv = () => {
-    const content = fs.readFileSync(metaCsvPath, "utf-8");
+  const readMetaCsv = (metaPath: string) => {
+    const content = fs.readFileSync(metaPath, "utf-8");
     const lines = content.split("\n").filter(line => line.trim() !== "");
     if (!lines.length) return { headers: [], rows: [] as any[] };
     const headers = parseCsvLine(lines[0]);
@@ -212,8 +268,8 @@ async function startServer() {
     return { headers: normalizedHeaders, rows };
   };
 
-  const readTeamPlayersCsv = (teamName: string) => {
-    const filePath = path.join(teamsDir, `${teamName}.csv`);
+  const readTeamPlayersCsv = (teamsPath: string, teamName: string) => {
+    const filePath = path.join(teamsPath, `${teamName}.csv`);
     if (!fs.existsSync(filePath)) return [] as any[];
     const content = fs.readFileSync(filePath, "utf-8");
     const lines = content.split("\n").filter(line => line.trim() !== "");
@@ -228,13 +284,14 @@ async function startServer() {
     });
   };
 
-  app.get("/api/teams", (req, res) => {
+  app.get(["/api/teams", "/api/world-cup/teams"], (req, res) => {
     try {
-      const { rows } = readMetaCsv();
+      const dataset = getDatasetFromRequest(req);
+      const { rows } = readMetaCsv(dataset.metaCsvPath);
       const teams = rows.map(r => String(r.team || '').trim()).filter(Boolean);
       const players: any[] = [];
       for (const team of teams) {
-        const teamPlayers = readTeamPlayersCsv(team).map(p => ({
+        const teamPlayers = readTeamPlayersCsv(dataset.teamsDir, team).map(p => ({
           team,
           name: p.name ?? '',
           'display-name': p['display-name'] ?? p.displayName ?? '',
@@ -261,20 +318,22 @@ async function startServer() {
     }
   });
 
-  app.post("/api/save-team", async (req, res) => {
+  app.post(["/api/save-team", "/api/world-cup/save-team"], async (req, res) => {
     const { teamName, players, background, glowColor, defaultFormation, preprocessUefa } = req.body;
     try {
+      const dataset = getDatasetFromRequest(req);
       console.log('save-team preprocessUefa:', preprocessUefa);
       const preprocessFlag =
         preprocessUefa === true ||
         preprocessUefa === 'true' ||
         preprocessUefa === 1 ||
         preprocessUefa === '1';
+      const shouldProcessImages = dataset.mode === "world-cup" || preprocessFlag;
       const normalizedTeamName = String(teamName || '').trim();
       if (!normalizedTeamName || !Array.isArray(players) || players.length === 0) {
         return res.status(400).json({ error: "Invalid team data" });
       }
-      const teamCsvPath = path.join(teamsDir, `${normalizedTeamName}.csv`);
+      const teamCsvPath = path.join(dataset.teamsDir, `${normalizedTeamName}.csv`);
       const teamHeaders = "name,display-name,image-url,role";
       const teamLines = players.map((p: any) =>
         [
@@ -287,7 +346,7 @@ async function startServer() {
       fs.writeFileSync(teamCsvPath, [teamHeaders, ...teamLines].join("\n") + "\n");
 
       // Update meta CSV
-      const { headers: metaHeaders, rows } = readMetaCsv();
+      const { headers: metaHeaders, rows } = readMetaCsv(dataset.metaCsvPath);
       const headers = metaHeaders.length ? metaHeaders : parseCsvLine("team,background,glowColor,defaultFormation,linkedTeam");
       const updatedRows = rows.filter((r: any) => String(r.team || '').trim() !== normalizedTeamName);
       updatedRows.push({
@@ -300,19 +359,25 @@ async function startServer() {
       const outLines = [headers.join(',')].concat(updatedRows.map(r =>
         headers.map(h => csvEscape(String(r[h] ?? ''))).join(',')
       ));
-      fs.writeFileSync(metaCsvPath, outLines.join("\n") + "\n");
+      fs.writeFileSync(dataset.metaCsvPath, outLines.join("\n") + "\n");
 
-      if (preprocessFlag) {
+      if (shouldProcessImages) {
         res.setHeader('Content-Type', 'application/x-ndjson');
         res.setHeader('Transfer-Encoding', 'chunked');
         // flush headers so the client can start reading
         // @ts-ignore
         res.flushHeaders?.();
-        res.write(JSON.stringify({ type: 'debug', preprocessUefa: preprocessFlag }) + "\n");
-        const teamOutDir = path.join(playersUefaDir, normalizedTeamName);
+        res.write(JSON.stringify({ type: 'debug', preprocessUefa: preprocessFlag, mode: dataset.mode }) + "\n");
+        const teamOutDir = path.join(dataset.playersImageDir, normalizedTeamName);
         if (!fs.existsSync(teamOutDir)) fs.mkdirSync(teamOutDir, { recursive: true });
         const rembgScript = path.join(__dirname, "scripts", "rembg_remove.py");
-        if (!existsSync(rembgScript)) {
+        const processedPlayers = players.map((p: any) => ({
+          name: String(p.name || '').trim(),
+          displayName: String(p.displayName || '').trim(),
+          imageUrl: String(p.imageUrl || '').trim(),
+          role: String(p.role || '').trim(),
+        }));
+        if (dataset.mode !== "world-cup" && !existsSync(rembgScript)) {
           res.write(JSON.stringify({
             type: 'error',
             current: 0,
@@ -327,7 +392,8 @@ async function startServer() {
         const total = players.length;
         res.write(JSON.stringify({ type: 'progress', current, total }) + "\n");
         await new Promise(r => setTimeout(r, 0));
-        for (const p of players) {
+        for (let index = 0; index < players.length; index += 1) {
+          const p = players[index];
           const imageUrl = String(p.imageUrl || '').trim();
           const displayName = String(p.displayName || '').trim();
           if (!imageUrl || !displayName) {
@@ -338,14 +404,22 @@ async function startServer() {
           const slug = slugify(displayName);
           if (!slug) continue;
           const outPath = path.join(teamOutDir, `${slug}.png`);
-          const tmpIn = path.join(os.tmpdir(), `uefa_${Date.now()}_${Math.random().toString(36).slice(2)}.img`);
-          const tmpOut = path.join(os.tmpdir(), `uefa_${Date.now()}_${Math.random().toString(36).slice(2)}.png`);
+          const tmpIn = path.join(os.tmpdir(), `team_${Date.now()}_${Math.random().toString(36).slice(2)}.img`);
+          const tmpOut = path.join(os.tmpdir(), `team_${Date.now()}_${Math.random().toString(36).slice(2)}.png`);
           try {
-            await downloadToFile(imageUrl, tmpIn);
-            const pythonBin = getPythonBin();
-            await execFileAsync(pythonBin, [rembgScript, tmpIn, tmpOut]);
+            await downloadToFile(dataset.mode === "world-cup" ? toFifaQuality100Url(imageUrl) : imageUrl, tmpIn);
+            if (dataset.mode === "world-cup") {
+              await cropWorldCupPortrait(tmpIn, tmpOut);
+            } else {
+              const pythonBin = getPythonBin();
+              await execFileAsync(pythonBin, [rembgScript, tmpIn, tmpOut]);
+            }
             if (fs.existsSync(tmpOut)) {
               fs.copyFileSync(tmpOut, outPath);
+              if (dataset.mode === "world-cup") {
+                processedPlayers[index].imageUrl =
+                  `/img/players-world-cup/${encodeURIComponent(normalizedTeamName)}/${encodeURIComponent(slug)}.png`;
+              }
             } else {
               throw new Error('rembg did not produce output');
             }
@@ -366,6 +440,17 @@ async function startServer() {
             try { fs.unlinkSync(tmpOut); } catch {}
           }
         }
+        if (dataset.mode === "world-cup") {
+          const processedTeamLines = processedPlayers.map((p: any) =>
+            [
+              csvEscape(String(p.name || '')),
+              csvEscape(String(p.displayName || '')),
+              csvEscape(String(p.imageUrl || '')),
+              csvEscape(String(p.role || ''))
+            ].join(",")
+          );
+          fs.writeFileSync(teamCsvPath, [teamHeaders, ...processedTeamLines].join("\n") + "\n");
+        }
         res.write(JSON.stringify({ type: 'done' }) + "\n");
         return res.end();
       }
@@ -384,17 +469,19 @@ async function startServer() {
     }
   });
 
-  app.get("/api/admin/meta", (req, res) => {
+  app.get(["/api/admin/meta", "/api/world-cup/admin/meta"], (req, res) => {
     try {
-      const { headers, rows } = readMetaCsv();
+      const dataset = getDatasetFromRequest(req);
+      const { headers, rows } = readMetaCsv(dataset.metaCsvPath);
       res.json({ headers, rows });
     } catch (e) {
       res.status(500).json({ error: 'Failed to read teams meta' });
     }
   });
 
-  app.post("/api/admin/meta", (req, res) => {
+  app.post(["/api/admin/meta", "/api/world-cup/admin/meta"], (req, res) => {
     try {
+      const dataset = getDatasetFromRequest(req);
       const { headers, rows } = req.body || {};
       const safeHeaders = Array.isArray(headers) && headers.length
         ? headers
@@ -403,25 +490,27 @@ async function startServer() {
       const outLines = [safeHeaders.join(',')].concat(safeRows.map((r: any) =>
         safeHeaders.map(h => csvEscape(String(r?.[h] ?? ''))).join(',')
       ));
-      fs.writeFileSync(metaCsvPath, outLines.join("\n") + "\n");
+      fs.writeFileSync(dataset.metaCsvPath, outLines.join("\n") + "\n");
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: 'Failed to write teams meta' });
     }
   });
 
-  app.get("/api/admin/teams/:team/players", (req, res) => {
+  app.get(["/api/admin/teams/:team/players", "/api/world-cup/admin/teams/:team/players"], (req, res) => {
     try {
+      const dataset = getDatasetFromRequest(req);
       const team = String(req.params.team || '');
-      const rows = readTeamPlayersCsv(team);
+      const rows = readTeamPlayersCsv(dataset.teamsDir, team);
       res.json({ headers: ['name', 'display-name', 'image-url', 'role'], rows });
     } catch (e) {
       res.status(500).json({ error: 'Failed to read team players' });
     }
   });
 
-  app.post("/api/admin/teams/:team/players", (req, res) => {
+  app.post(["/api/admin/teams/:team/players", "/api/world-cup/admin/teams/:team/players"], (req, res) => {
     try {
+      const dataset = getDatasetFromRequest(req);
       const team = String(req.params.team || '');
       const { rows } = req.body || {};
       const safeRows = Array.isArray(rows) ? rows : [];
@@ -429,11 +518,45 @@ async function startServer() {
       const outLines = [headers.join(',')].concat(safeRows.map((r: any) =>
         headers.map(h => csvEscape(String(r?.[h] ?? ''))).join(',')
       ));
-      const teamCsvPath = path.join(teamsDir, `${team}.csv`);
+      const teamCsvPath = path.join(dataset.teamsDir, `${team}.csv`);
       fs.writeFileSync(teamCsvPath, outLines.join("\n") + "\n");
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: 'Failed to write team players' });
+    }
+  });
+
+  app.post(["/api/admin/teams/:team/delete", "/api/world-cup/admin/teams/:team/delete"], (req, res) => {
+    try {
+      const dataset = getDatasetFromRequest(req);
+      const team = String(req.params.team || '').trim();
+      if (!team) {
+        return res.status(400).json({ error: 'Missing team name' });
+      }
+
+      const teamCsvPath = path.join(dataset.teamsDir, `${team}.csv`);
+      if (fs.existsSync(teamCsvPath)) {
+        fs.unlinkSync(teamCsvPath);
+      }
+
+      const teamImageDir = path.join(dataset.playersImageDir, team);
+      if (fs.existsSync(teamImageDir)) {
+        fs.rmSync(teamImageDir, { recursive: true, force: true });
+      }
+
+      const { headers, rows } = readMetaCsv(dataset.metaCsvPath);
+      const safeHeaders = headers.length
+        ? headers
+        : ['team', 'background', 'glowColor', 'defaultFormation', 'linkedTeam'];
+      const filteredRows = rows.filter((row: any) => String(row.team || '').trim() !== team);
+      const outLines = [safeHeaders.join(',')].concat(
+        filteredRows.map((row: any) => safeHeaders.map(header => csvEscape(String(row?.[header] ?? ''))).join(','))
+      );
+      fs.writeFileSync(dataset.metaCsvPath, outLines.join("\n") + "\n");
+
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: 'Failed to delete team' });
     }
   });
 

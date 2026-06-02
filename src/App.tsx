@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Team, LineupState, Formation, Player } from './types';
+import { Team, LineupState, Formation, Player, AppMode } from './types';
 import TeamManager from './components/TeamManager';
 import LineupPreview from './components/LineupPreview';
 import { FORMATIONS, FORMATION_POSITIONS } from './constants';
 import { DEFAULT_LOGO_VALUES } from './defaults';
 import { Layout, Image as ImageIcon, Users, Settings, Download, Search } from 'lucide-react';
+import { COMPETITION_CONFIG } from './competitionConfig';
 
 const initialState: LineupState = {
   teamName: '',
@@ -49,25 +50,18 @@ const normalizeSearch = (value: string) =>
     .replace(/[’'ʼ]/g, '')
     .toLowerCase();
 
-const getLocalCandidates = (teamName: string, displayName: string) => {
+const getLocalCandidates = (teamName: string, displayName: string, folders: string[]) => {
   const teamFolder = teamName ? encodeURIComponent(teamName) : '';
   const slug = slugify(displayName || '');
-  if (!slug) return '';
-  const bases = teamFolder
-    ? [
-        `/img/players/${teamFolder}/${encodeURIComponent(slug)}.png`,
-        `/img/players/${teamFolder}/${encodeURIComponent(slug)}.webp`,
-        `/img/players/${teamFolder}/${encodeURIComponent(slug)}.jpg`,
-        `/img/players/${teamFolder}/${encodeURIComponent(slug)}.jpeg`,
-        `/img/players-uefa/${teamFolder}/${encodeURIComponent(slug)}.png`,
-      ]
-    : [
-        `/img/players/${encodeURIComponent(slug)}.png`,
-        `/img/players/${encodeURIComponent(slug)}.webp`,
-        `/img/players/${encodeURIComponent(slug)}.jpg`,
-        `/img/players/${encodeURIComponent(slug)}.jpeg`,
-        `/img/players-uefa/${encodeURIComponent(slug)}.png`,
-      ];
+  if (!slug) return [];
+  const extensions = ['png', 'webp', 'jpg', 'jpeg'];
+  const bases = folders.flatMap(folder =>
+    extensions.map(ext =>
+      teamFolder
+        ? `${folder}/${teamFolder}/${encodeURIComponent(slug)}.${ext}`
+        : `${folder}/${encodeURIComponent(slug)}.${ext}`
+    )
+  );
   return bases;
 };
 
@@ -103,7 +97,12 @@ const Thumb = ({
   );
 };
 
-export default function App() {
+type Props = {
+  mode: AppMode;
+};
+
+export default function App({ mode }: Props) {
+  const config = COMPETITION_CONFIG[mode];
   const [state, setState] = useState<LineupState>(initialState);
   const [currentTeam, setCurrentTeam] = useState<Team | null>(null);
   const [includeLinkedTeam, setIncludeLinkedTeam] = useState(false);
@@ -112,8 +111,8 @@ export default function App() {
   const [openDropdown, setOpenDropdown] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    fetch('/api/backgrounds').then(res => res.json()).then(setBackgrounds);
-  }, []);
+    fetch(config.backgroundsApiPath).then(res => res.json()).then(setBackgrounds);
+  }, [config.backgroundsApiPath]);
 
 const handleTeamSelect = (team: Team) => {
     const fallbackBg = backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.png`)
@@ -166,11 +165,12 @@ const handleTeamSelect = (team: Team) => {
       <div className="w-full lg:w-1/2 p-4 lg:p-8 overflow-y-auto lg:h-screen border-r border-slate-200">
         <div className="max-w-2xl mx-auto">
           <header className="mb-8">
-            <h1 className="text-3xl font-bold text-slate-900">UEFA Lineup Builder</h1>
+            <h1 className="text-3xl font-bold text-slate-900">{config.title}</h1>
             <p className="text-slate-500">Create professional matchday graphics</p>
           </header>
 
           <TeamManager
+            mode={mode}
             onTeamSelect={handleTeamSelect}
             includeLinkedTeam={includeLinkedTeam}
             onIncludeLinkedTeamChange={setIncludeLinkedTeam}
@@ -337,7 +337,7 @@ const handleTeamSelect = (team: Team) => {
                       {openDropdown[pos.id] && (
                         <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
                           {getFilteredPlayers(pos.role, searchTerm[pos.id] || '').map(p => {
-                            const localCandidates = getLocalCandidates(state.teamName, p.displayName || p.name);
+                            const localCandidates = getLocalCandidates(state.teamName, p.displayName || p.name, config.playerImageFolders);
                             const imageUrlLocal = getImageUrlLocalCandidate(state.teamName, p.imageUrl || '');
                             const sources = [
                               ...localCandidates,
@@ -369,7 +369,7 @@ const handleTeamSelect = (team: Team) => {
                           <div className="flex items-center gap-2 overflow-hidden">
                             <Thumb
                               sources={[
-                                ...getLocalCandidates(state.teamName, state.players[pos.id]?.displayName || state.players[pos.id]?.name || ''),
+                                ...getLocalCandidates(state.teamName, state.players[pos.id]?.displayName || state.players[pos.id]?.name || '', config.playerImageFolders),
                                 ...(getImageUrlLocalCandidate(state.teamName, state.players[pos.id]?.imageUrl || '') ? [getImageUrlLocalCandidate(state.teamName, state.players[pos.id]?.imageUrl || '')] : []),
                                 ...(isRemoteUrl(state.players[pos.id]?.imageUrl || '') ? [state.players[pos.id]?.imageUrl] : []),
                               ].filter(Boolean) as string[]}
@@ -431,7 +431,7 @@ const handleTeamSelect = (team: Team) => {
               <Download className="w-4 h-4" /> Download PNG
             </button>
           </div>
-          <LineupPreview state={state} />
+          <LineupPreview state={state} mode={mode} />
           <p className="text-slate-500 text-xs mt-4 text-center">
             The graphic is rendered at 1080x1350px. Changes are reflected in real-time.
           </p>
