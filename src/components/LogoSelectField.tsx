@@ -15,6 +15,7 @@ type Props = {
 };
 
 const isRemoteUrl = (value: string) => /^https?:\/\//i.test(value);
+const getOptionValue = (option: LogoOption) => option.url.trim() || `local:${option.name}`;
 
 export default function LogoSelectField({
   label,
@@ -28,7 +29,7 @@ export default function LogoSelectField({
   const [useCustom, setUseCustom] = useState(false);
 
   const selectedOption = useMemo(
-    () => options.find(option => option.url === value) || null,
+    () => options.find(option => getOptionValue(option) === value) || null,
     [options, value]
   );
 
@@ -63,7 +64,7 @@ export default function LogoSelectField({
               <Search className="w-4 h-4 text-slate-400 absolute left-2.5 top-2.5" />
               <input
                 type="text"
-                className="w-full p-2 pl-8 border border-slate-300 rounded-lg text-sm"
+                className="w-full p-2 pl-8 border border-slate-300 rounded-lg text-sm text-slate-700 bg-white"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={placeholder}
@@ -74,9 +75,9 @@ export default function LogoSelectField({
                 <button
                   key={`${option.name}-${option.url}`}
                   type="button"
-                  className="w-full px-3 py-2 text-left text-sm hover:bg-slate-50 border-b border-slate-50 last:border-b-0"
+                  className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 border-b border-slate-50 last:border-b-0"
                   onClick={() => {
-                    onChange(option.url);
+                    onChange(getOptionValue(option));
                     setUseCustom(false);
                     setIsOpen(false);
                     setSearch('');
@@ -102,7 +103,7 @@ export default function LogoSelectField({
         {(useCustom || (value && !selectedOption)) && (
           <input
             type="text"
-            className="w-full p-2 border border-slate-300 rounded-lg text-sm"
+            className="w-full p-2 border border-slate-300 rounded-lg text-sm text-slate-700 bg-white"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             placeholder="https://..."

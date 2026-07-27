@@ -57,7 +57,8 @@ export default function TeamManager({ mode, onTeamSelect, includeLinkedTeam, onI
       name: p.name,
       displayName: p['display-name'],
       imageUrl: p['image-url'],
-      role: (typeof p.role === 'string' && p.role.toLowerCase() === 'goalkeeper') ? 'goalkeeper' : 'outfield'
+      role: (typeof p.role === 'string' && p.role.toLowerCase() === 'goalkeeper') ? 'goalkeeper' : 'outfield',
+      teamName
     }));
 
   const getMergedPlayers = (teamName: string, linkedTeamName?: string) => {

@@ -1,28 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Team, LineupState, Formation, Player, AppMode } from './types';
 import TeamManager from './components/TeamManager';
 import LineupPreview from './components/LineupPreview';
 import LogoSelectField, { type LogoOption } from './components/LogoSelectField';
 import { FORMATIONS, FORMATION_POSITIONS } from './constants';
-import { DEFAULT_LOGO_VALUES } from './defaults';
+import { DEFAULT_LOGO_VALUES_BY_MODE } from './defaults';
 import { Layout, Image as ImageIcon, Users, Settings, Download, Search } from 'lucide-react';
 import { COMPETITION_CONFIG } from './competitionConfig';
-
-const initialState: LineupState = {
-  teamName: '',
-  formation: '4-2-3-1',
-  players: {},
-  subs: '',
-  tournamentLogo: DEFAULT_LOGO_VALUES.tournamentLogo,
-  tournamentLogoMonochrome: true,
-  matchday: 'Final',
-  homeLogo: DEFAULT_LOGO_VALUES.homeLogo,
-  awayLogo: DEFAULT_LOGO_VALUES.awayLogo,
-  background: '',
-  glowColor: '',
-  possibleLineup: false,
-  possibleLineupText: 'Possible\nline-up',
-};
 
 const placeholderAvatar =
   "data:image/svg+xml;utf8," +
@@ -51,6 +35,13 @@ const normalizeSearch = (value: string) =>
     .replace(/[’'ʼ]/g, '')
     .toLowerCase();
 
+const makeTemporaryPlayer = (value: string, role: Player['role']): Player => ({
+  name: value.trim(),
+  displayName: value.trim(),
+  imageUrl: '',
+  role,
+});
+
 const getLocalCandidates = (teamName: string, displayName: string, folders: string[]) => {
   const teamFolder = teamName ? encodeURIComponent(teamName) : '';
   const slug = slugify(displayName || '');
@@ -72,6 +63,9 @@ const getImageUrlLocalCandidate = (teamName: string, imageUrl: string) => {
   const teamFolder = teamName ? encodeURIComponent(teamName) : '';
   return teamFolder ? `/img/players/${teamFolder}/${encodeURIComponent(raw)}` : `/img/players/${encodeURIComponent(raw)}`;
 };
+
+const getPlayerImageTeam = (fallbackTeamName: string, player?: Player | null) =>
+  player?.teamName || fallbackTeamName;
 
 const Thumb = ({
   sources,
@@ -104,6 +98,21 @@ type Props = {
 
 export default function App({ mode }: Props) {
   const config = COMPETITION_CONFIG[mode];
+  const initialState: LineupState = {
+    teamName: '',
+    formation: '4-2-3-1',
+    players: {},
+    subs: '',
+    tournamentLogo: DEFAULT_LOGO_VALUES_BY_MODE[mode].tournamentLogo,
+    tournamentLogoMonochrome: true,
+    matchday: DEFAULT_LOGO_VALUES_BY_MODE[mode].matchday,
+    homeLogo: DEFAULT_LOGO_VALUES_BY_MODE[mode].homeLogo,
+    awayLogo: DEFAULT_LOGO_VALUES_BY_MODE[mode].awayLogo,
+    background: '',
+    glowColor: '',
+    possibleLineup: false,
+    possibleLineupText: 'Possible\nline-up',
+  };
   const [state, setState] = useState<LineupState>(initialState);
   const [currentTeam, setCurrentTeam] = useState<Team | null>(null);
   const [includeLinkedTeam, setIncludeLinkedTeam] = useState(false);
@@ -112,6 +121,8 @@ export default function App({ mode }: Props) {
   const [teamLogoOptions, setTeamLogoOptions] = useState<LogoOption[]>([]);
   const [searchTerm, setSearchTerm] = useState<Record<string, string>>({});
   const [openDropdown, setOpenDropdown] = useState<Record<string, boolean>>({});
+  const latestPlayersRef = useRef(state.players);
+  const latestSearchTermRef = useRef(searchTerm);
 
   useEffect(() => {
     fetch(config.backgroundsApiPath).then(res => res.json()).then(setBackgrounds);
@@ -124,6 +135,14 @@ export default function App({ mode }: Props) {
       .then(data => setTeamLogoOptions(Array.isArray(data.options) ? data.options : []))
       .catch(() => setTeamLogoOptions([]));
   }, [config.apiBase, config.backgroundsApiPath]);
+
+  useEffect(() => {
+    latestPlayersRef.current = state.players;
+  }, [state.players]);
+
+  useEffect(() => {
+    latestSearchTermRef.current = searchTerm;
+  }, [searchTerm]);
 
 const handleTeamSelect = (team: Team) => {
     const fallbackBg = backgrounds.find(b => b.toLowerCase() === `${team.name.toLowerCase()}.png`)
@@ -168,6 +187,27 @@ const handleTeamSelect = (team: Team) => {
       const display = normalizeSearch(p.displayName || '');
       return name.includes(normalizedTerm) || display.includes(normalizedTerm);
     });
+  };
+
+  const syncPlayerFromInput = (posId: string, role: Player['role']) => {
+    const rawValue = (latestSearchTermRef.current[posId] || '').trim();
+    if (!rawValue) {
+      updatePlayer(posId, null);
+      return;
+    }
+
+    const selectedPlayer = latestPlayersRef.current[posId];
+    const normalizedRaw = normalizeSearch(rawValue);
+    const selectedMatches =
+      selectedPlayer &&
+      (normalizeSearch(selectedPlayer.name) === normalizedRaw ||
+        normalizeSearch(selectedPlayer.displayName) === normalizedRaw);
+
+    if (selectedMatches) {
+      return;
+    }
+
+    updatePlayer(posId, makeTemporaryPlayer(rawValue, role));
   };
 
   return (
@@ -337,6 +377,7 @@ const handleTeamSelect = (team: Team) => {
                           onFocus={() => setOpenDropdown(prev => ({ ...prev, [pos.id]: true }))}
                           onBlur={() => {
                             window.setTimeout(() => {
+                              syncPlayerFromInput(pos.id, pos.role);
                               setOpenDropdown(prev => ({ ...prev, [pos.id]: false }));
                             }, 150);
                           }}
@@ -347,8 +388,9 @@ const handleTeamSelect = (team: Team) => {
                       {openDropdown[pos.id] && (
                         <div className="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto">
                           {getFilteredPlayers(pos.role, searchTerm[pos.id] || '').map(p => {
-                            const localCandidates = getLocalCandidates(state.teamName, p.displayName || p.name, config.playerImageFolders);
-                            const imageUrlLocal = getImageUrlLocalCandidate(state.teamName, p.imageUrl || '');
+                            const imageTeamName = getPlayerImageTeam(state.teamName, p);
+                            const localCandidates = getLocalCandidates(imageTeamName, p.displayName || p.name, config.playerImageFolders);
+                            const imageUrlLocal = getImageUrlLocalCandidate(imageTeamName, p.imageUrl || '');
                             const sources = [
                               ...localCandidates,
                               ...(imageUrlLocal ? [imageUrlLocal] : []),
@@ -379,8 +421,12 @@ const handleTeamSelect = (team: Team) => {
                           <div className="flex items-center gap-2 overflow-hidden">
                             <Thumb
                               sources={[
-                                ...getLocalCandidates(state.teamName, state.players[pos.id]?.displayName || state.players[pos.id]?.name || '', config.playerImageFolders),
-                                ...(getImageUrlLocalCandidate(state.teamName, state.players[pos.id]?.imageUrl || '') ? [getImageUrlLocalCandidate(state.teamName, state.players[pos.id]?.imageUrl || '')] : []),
+                                ...getLocalCandidates(
+                                  getPlayerImageTeam(state.teamName, state.players[pos.id]),
+                                  state.players[pos.id]?.displayName || state.players[pos.id]?.name || '',
+                                  config.playerImageFolders
+                                ),
+                                ...(getImageUrlLocalCandidate(getPlayerImageTeam(state.teamName, state.players[pos.id]), state.players[pos.id]?.imageUrl || '') ? [getImageUrlLocalCandidate(getPlayerImageTeam(state.teamName, state.players[pos.id]), state.players[pos.id]?.imageUrl || '')] : []),
                                 ...(isRemoteUrl(state.players[pos.id]?.imageUrl || '') ? [state.players[pos.id]?.imageUrl] : []),
                               ].filter(Boolean) as string[]}
                               className="w-8 h-8 rounded-full object-cover"

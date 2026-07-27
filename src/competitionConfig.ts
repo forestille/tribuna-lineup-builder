@@ -6,6 +6,8 @@ export type CompetitionConfig = {
   apiBase: string;
   backgroundsApiPath: string;
   playerImageFolders: string[];
+  teamLogoFolders: string[];
+  tournamentLogoFolders: string[];
   preprocessFolder: string;
   importLabel: string;
 };
@@ -17,6 +19,8 @@ export const COMPETITION_CONFIG: Record<AppMode, CompetitionConfig> = {
     apiBase: '/api',
     backgroundsApiPath: '/api/backgrounds',
     playerImageFolders: ['/img/players', '/img/players-uefa'],
+    teamLogoFolders: ['/img/team-logos'],
+    tournamentLogoFolders: ['/img/tournament-logos'],
     preprocessFolder: 'players-uefa',
     importLabel: 'Paste UEFA Squad HTML Source',
   },
@@ -26,6 +30,8 @@ export const COMPETITION_CONFIG: Record<AppMode, CompetitionConfig> = {
     apiBase: '/api/world-cup',
     backgroundsApiPath: '/api/backgrounds',
     playerImageFolders: ['/img/players-world-cup', '/img/players'],
+    teamLogoFolders: ['/img/world-cup/team-logos'],
+    tournamentLogoFolders: ['/img/world-cup/tournament-logos'],
     preprocessFolder: 'players-world-cup',
     importLabel: 'Paste FIFA Squad HTML Source',
   },

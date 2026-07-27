@@ -20,6 +20,8 @@ export default defineConfig(({mode}) => {
       // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       allowedHosts: true,
+      port: Number(process.env.PORT) || 24622,
+      host: '0.0.0.0',
       watch: {
         ignored: [
           '**/public/img/players/**',

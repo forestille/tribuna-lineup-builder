@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { LineupState, Player, AppMode } from '../types';
 import { FORMATION_POSITIONS } from '../constants';
+import { COMPETITION_CONFIG } from '../competitionConfig';
 
 interface Props {
   state: LineupState;
@@ -8,6 +9,7 @@ interface Props {
 }
 
 export default function LineupPreview({ state, mode }: Props) {
+  const config = COMPETITION_CONFIG[mode];
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const baseCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const playersCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -16,6 +18,7 @@ export default function LineupPreview({ state, mode }: Props) {
   const prevTeamNameRef = useRef<string>('');
   const prevGlowRef = useRef<string>('');
   const prevPlayerKeysRef = useRef<Record<string, string>>({});
+  const [assetVersion, setAssetVersion] = useState(() => localStorage.getItem('teamsUpdated') || String(Date.now()));
 
   const ensureFontsLoaded = (() => {
     let cached: Promise<void> | null = null;
@@ -33,6 +36,27 @@ export default function LineupPreview({ state, mode }: Props) {
       return cached;
     };
   })();
+
+  useEffect(() => {
+    const bumpAssetVersion = () => {
+      const next = localStorage.getItem('teamsUpdated') || String(Date.now());
+      setAssetVersion(next);
+      const cache = (window as any).__lineupImageCache;
+      if (cache?.clear) cache.clear();
+    };
+
+    const onFocus = () => bumpAssetVersion();
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'teamsUpdated') bumpAssetVersion();
+    };
+
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -81,7 +105,7 @@ export default function LineupPreview({ state, mode }: Props) {
         baseCtx.fillRect(0, 0, baseCanvas.width, baseCanvas.height);
 
         if (state.background) {
-          const bgImg = await loadImage(`/img/backgrounds/${state.background}`);
+          const bgImg = await loadImage(withAssetVersion(`/img/backgrounds/${state.background}`, assetVersion));
           baseCtx.drawImage(bgImg, 0, 0, baseCanvas.width, baseCanvas.height);
         }
 
@@ -89,7 +113,7 @@ export default function LineupPreview({ state, mode }: Props) {
           let logoCenterX: number | null = null;
           if (state.tournamentLogo) {
             try {
-              const tLogo = await loadImage(state.tournamentLogo);
+              const tLogo = await loadLogoImage(state.tournamentLogo, config.tournamentLogoFolders);
               const maxH = 137;
               const maxW = 140;
               const scale = Math.min(maxH / tLogo.height, maxW / tLogo.width);
@@ -158,18 +182,26 @@ export default function LineupPreview({ state, mode }: Props) {
         const vsY = 155;
         if (state.homeLogo) {
           try {
-            const hLogo = await loadImage(state.homeLogo);
-            const scale = 180 / hLogo.height;
-            const width = hLogo.width * scale;
-            baseCtx.drawImage(hLogo, vsX - 150 - width / 2, 55, width, 180);
+            const hLogo = await loadLogoImage(state.homeLogo, config.teamLogoFolders);
+            if (mode === 'world-cup') {
+              drawWorldCupTeamLogo(baseCtx, hLogo, vsX - 150, 145);
+            } else {
+              const scale = 180 / hLogo.height;
+              const width = hLogo.width * scale;
+              baseCtx.drawImage(hLogo, vsX - 150 - width / 2, 55, width, 180);
+            }
           } catch (e) {}
         }
         if (state.awayLogo) {
           try {
-            const aLogo = await loadImage(state.awayLogo);
-            const scale = 180 / aLogo.height;
-            const width = aLogo.width * scale;
-            baseCtx.drawImage(aLogo, vsX + 150 - width / 2, 55, width, 180);
+            const aLogo = await loadLogoImage(state.awayLogo, config.teamLogoFolders);
+            if (mode === 'world-cup') {
+              drawWorldCupTeamLogo(baseCtx, aLogo, vsX + 150, 145);
+            } else {
+              const scale = 180 / aLogo.height;
+              const width = aLogo.width * scale;
+              baseCtx.drawImage(aLogo, vsX + 150 - width / 2, 55, width, 180);
+            }
           } catch (e) {}
         }
         if (state.homeLogo || state.awayLogo) {
@@ -181,8 +213,8 @@ export default function LineupPreview({ state, mode }: Props) {
 
         if (!state.possibleLineup && state.subs) {
           try {
-            const subsImg = await loadImage('/img/subs.png');
-            baseCtx.drawImage(subsImg, 115, 1248);
+            const subsImg = await loadImage(withAssetVersion('/img/subs.png', assetVersion));
+            baseCtx.drawImage(subsImg, 50, 1248);
           } catch (e) {}
           baseCtx.fillStyle = 'white';
           baseCtx.font = '28px "Kelson Sans", sans-serif';
@@ -191,7 +223,7 @@ export default function LineupPreview({ state, mode }: Props) {
           baseCtx.font = '28px "Kelson Sans", sans-serif';
           subsList.forEach((sub, i) => {
             if (i < 10) {
-              drawSubsLine(baseCtx, sub.trim(), 180, 1245 + 35 + (i * 40), 30);
+              drawSubsLine(baseCtx, sub.trim(), 115, 1245 + 35 + (i * 40), 30);
             }
           });
         }
@@ -208,7 +240,7 @@ export default function LineupPreview({ state, mode }: Props) {
       prevGlowRef.current = state.glowColor || '';
 
       const getPlayerKey = (p: Player | null) =>
-        p ? `${p.name}|${p.displayName}|${p.imageUrl}|${p.role}` : '';
+        p ? `${p.name}|${p.displayName}|${p.imageUrl}|${p.role}|${p.teamName || ''}` : '';
 
       const clearPlayerRegion = (x: number, y: number) => {
         const width = 420;
@@ -251,7 +283,7 @@ export default function LineupPreview({ state, mode }: Props) {
     };
 
     draw();
-  }, [state]);
+  }, [state, assetVersion]);
 
   const loadImage = (src: string): Promise<HTMLImageElement> => {
     const cache = (window as any).__lineupImageCache || ((window as any).__lineupImageCache = new Map());
@@ -268,10 +300,24 @@ export default function LineupPreview({ state, mode }: Props) {
     return promise;
   };
 
+  const loadLogoImage = async (value: string, folders: string[]) => {
+    const candidates = getLogoSources(value, folders);
+    let lastError: unknown = null;
+    for (const candidate of candidates) {
+      try {
+        return await loadImage(withAssetVersion(candidate, assetVersion));
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error(`Unable to load logo: ${value}`);
+  };
+
   const getVisibleBounds = (img: HTMLImageElement) => {
     const cache = (window as any).__lineupVisibleBoundsCache || ((window as any).__lineupVisibleBoundsCache = new Map());
     const key = img.currentSrc || img.src;
     if (cache.has(key)) return cache.get(key);
+    const alphaThreshold = 12;
 
     const off = document.createElement('canvas');
     off.width = img.naturalWidth || img.width;
@@ -295,7 +341,7 @@ export default function LineupPreview({ state, mode }: Props) {
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
         const alpha = data[(y * width + x) * 4 + 3];
-        if (alpha > 0) {
+        if (alpha > alphaThreshold) {
           if (x < minX) minX = x;
           if (y < minY) minY = y;
           if (x > maxX) maxX = x;
@@ -313,7 +359,7 @@ export default function LineupPreview({ state, mode }: Props) {
   };
 
   const resolvePlayerImageCandidates = (p: Player | null) => {
-    const team = (state.teamName || '').trim();
+    const team = (p?.teamName || state.teamName || '').trim();
     const teamFolder = team ? encodeURIComponent(team) : '';
     const candidates: Array<{ url: string; fromDisplay: boolean; circlePos: boolean; circleMask: boolean }> = [];
     const seen = new Set<string>();
@@ -401,7 +447,7 @@ export default function LineupPreview({ state, mode }: Props) {
   const loadCandidateImage = async (candidates: Array<{ url: string; fromDisplay: boolean; circlePos: boolean; circleMask: boolean }>) => {
     for (const c of candidates) {
       try {
-        const img = await loadImage(c.url);
+        const img = await loadImage(withAssetVersion(c.url, assetVersion));
         return { img, fromDisplay: c.fromDisplay, circlePos: c.circlePos, circleMask: c.circleMask };
       } catch {
         // try next
@@ -468,6 +514,19 @@ export default function LineupPreview({ state, mode }: Props) {
     ctx.restore();
   };
 
+  const drawMissingPlayerPlaceholder = (ctx: CanvasRenderingContext2D, x: number, y: number) => {
+    const size = 150;
+    const verticalOffset = 83;
+    const targetHeight = 180;
+    const squareX = x - size / 2;
+    const squareY = y - targetHeight + verticalOffset + 20;
+
+    ctx.save();
+    ctx.fillStyle = '#facc15';
+    ctx.fillRect(squareX, squareY, size, size);
+    ctx.restore();
+  };
+
   const drawPlayerImageAndTag = async (ctx: CanvasRenderingContext2D, x: number, y: number, player: Player | null) => {
     const candidates = resolvePlayerImageCandidates(player);
     const targetHeight = 180;
@@ -476,8 +535,8 @@ export default function LineupPreview({ state, mode }: Props) {
     const tagWidth = 223;
     const tagHeight = 37;
     const verticalOffset = 83;
-    const loaded = await loadCandidateImage(candidates);
-    if (loaded) {
+      const loaded = await loadCandidateImage(candidates);
+      if (loaded) {
       const { img, fromDisplay, circlePos, circleMask } = loaded;
       const visible = fromDisplay ? getVisibleBounds(img) : null;
       const sourceW = visible ? visible.sw : img.width;
@@ -515,15 +574,17 @@ export default function LineupPreview({ state, mode }: Props) {
           ctx.drawImage(img, sourceX, sourceY, sourceW, sourceH, imgX, imgY, imgW, imgH);
         }
       }
+    } else if (player) {
+      drawMissingPlayerPlaceholder(ctx, x, y);
     }
 
     // Name tag (text background centered under the circle)
     try {
       let tagImg: HTMLImageElement | null = null;
       try {
-        tagImg = await loadImage('/img/textbg.png');
+        tagImg = await loadImage(withAssetVersion('/img/textbg.png', assetVersion));
       } catch {
-        tagImg = await loadImage('/img/texbg.png');
+        tagImg = await loadImage(withAssetVersion('/img/texbg.png', assetVersion));
       }
       const tagX = x - tagWidth / 2;
       const tagY = y - tagHeight + verticalOffset;
@@ -626,3 +687,73 @@ export default function LineupPreview({ state, mode }: Props) {
     </div>
   );
 }
+
+const isRemoteUrl = (value: string) => /^https?:\/\//i.test(value);
+
+const slugify = (value: string) =>
+  value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\u2019\u02BC']/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+const getLogoSources = (value: string, folders: string[]) => {
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+  if (isRemoteUrl(raw) || raw.startsWith('/')) return [raw];
+  if (!raw.startsWith('local:')) return [raw];
+
+  const name = raw.slice('local:'.length).trim();
+  if (!name) return [];
+
+  const baseNames = Array.from(new Set([
+    name,
+    name.toLowerCase(),
+    slugify(name),
+  ].filter(Boolean))).map(base => encodeURIComponent(base));
+  const extensions = ['png', 'webp', 'jpg', 'jpeg', 'svg'];
+
+  return folders.flatMap(folder =>
+    baseNames.flatMap(base =>
+      extensions.map(ext => `${folder}/${base}.${ext}`)
+    )
+  );
+};
+
+const withAssetVersion = (src: string, assetVersion: string) => {
+  if (!src.startsWith('/img/')) return src;
+  const separator = src.includes('?') ? '&' : '?';
+  return `${src}${separator}v=${encodeURIComponent(assetVersion)}`;
+};
+
+const drawWorldCupTeamLogo = (
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  centerX: number,
+  centerY: number
+) => {
+  const circleSize = 180;
+  const radius = circleSize / 2;
+  const strokeWidth = 5;
+  const scaledHeight = 180;
+  const scaledWidth = img.width * (scaledHeight / img.height);
+  const drawX = centerX - scaledWidth / 2;
+  const drawY = centerY - scaledHeight / 2;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.drawImage(img, drawX, drawY, scaledWidth, scaledHeight);
+  ctx.restore();
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius - strokeWidth / 2, 0, Math.PI * 2);
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = strokeWidth;
+  ctx.stroke();
+  ctx.restore();
+};

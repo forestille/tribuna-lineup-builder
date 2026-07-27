@@ -43,7 +43,10 @@ async function startServer() {
       current += ch;
     }
     result.push(current);
-    return result;
+    return result.map((value, index) => {
+      const withoutLineEnding = value.replace(/\r$/, '');
+      return index === 0 ? withoutLineEnding.replace(/^\uFEFF/, '') : withoutLineEnding;
+    });
   };
 
   const csvEscape = (value: string) => {
@@ -170,38 +173,10 @@ async function startServer() {
   if (!fs.existsSync(bgDir)) fs.mkdirSync(bgDir, { recursive: true });
   ensureDataset(datasetByMode.uefa);
   ensureDataset(datasetByMode["world-cup"]);
-  ensureLogoCsv(datasetByMode.uefa.tournamentLogosCsvPath, [
-    {
-      name: "Premier League 2",
-      url: "https://contentfulproxy.stadion.io/zl2jjr3puakk/1nFivy1O9BbfODq1UOk1cI/f098e4d07583c5ae9b0569b243c9971f/Premier_League_2.png",
-    },
-  ]);
-  ensureLogoCsv(datasetByMode.uefa.teamLogosCsvPath, [
-    {
-      name: "Brighton & Hove Albion",
-      url: "https://upload.wikimedia.org/wikipedia/ru/thumb/2/24/FC_Brighton_%26_Hove_Albion_Logo.svg/1280px-FC_Brighton_%26_Hove_Albion_Logo.svg.png",
-    },
-    {
-      name: "Manchester United",
-      url: "https://upload.wikimedia.org/wikipedia/sco/thumb/7/7a/Manchester_United_FC_crest.svg/3840px-Manchester_United_FC_crest.svg.png",
-    },
-  ]);
-  ensureLogoCsv(datasetByMode["world-cup"].tournamentLogosCsvPath, [
-    {
-      name: "World Cup Placeholder",
-      url: "https://contentfulproxy.stadion.io/zl2jjr3puakk/1nFivy1O9BbfODq1UOk1cI/f098e4d07583c5ae9b0569b243c9971f/Premier_League_2.png",
-    },
-  ]);
-  ensureLogoCsv(datasetByMode["world-cup"].teamLogosCsvPath, [
-    {
-      name: "Spain Placeholder",
-      url: "https://upload.wikimedia.org/wikipedia/ru/thumb/2/24/FC_Brighton_%26_Hove_Albion_Logo.svg/1280px-FC_Brighton_%26_Hove_Albion_Logo.svg.png",
-    },
-    {
-      name: "World Cup Team Placeholder",
-      url: "https://upload.wikimedia.org/wikipedia/sco/thumb/7/7a/Manchester_United_FC_crest.svg/3840px-Manchester_United_FC_crest.svg.png",
-    },
-  ]);
+  ensureLogoCsv(datasetByMode.uefa.tournamentLogosCsvPath, []);
+  ensureLogoCsv(datasetByMode.uefa.teamLogosCsvPath, []);
+  ensureLogoCsv(datasetByMode["world-cup"].tournamentLogosCsvPath, []);
+  ensureLogoCsv(datasetByMode["world-cup"].teamLogosCsvPath, []);
 
   const getModeFromRequest = (req: express.Request): Mode =>
     req.path.startsWith("/api/world-cup/") || req.query.mode === "world-cup" ? "world-cup" : "uefa";
@@ -349,7 +324,7 @@ async function startServer() {
           url: String(row.url || '').trim(),
         };
       })
-      .filter(row => row.name && row.url);
+      .filter(row => row.name);
   };
 
   app.get(["/api/teams", "/api/world-cup/teams"], (req, res) => {
@@ -471,9 +446,10 @@ async function startServer() {
           }
           const slug = slugify(displayName);
           if (!slug) continue;
-          const outPath = path.join(teamOutDir, `${slug}.png`);
+          const outExt = dataset.mode === "world-cup" ? "webp" : "png";
+          const outPath = path.join(teamOutDir, `${slug}.${outExt}`);
           const tmpIn = path.join(os.tmpdir(), `team_${Date.now()}_${Math.random().toString(36).slice(2)}.img`);
-          const tmpOut = path.join(os.tmpdir(), `team_${Date.now()}_${Math.random().toString(36).slice(2)}.png`);
+          const tmpOut = path.join(os.tmpdir(), `team_${Date.now()}_${Math.random().toString(36).slice(2)}.${outExt}`);
           try {
             await downloadToFile(dataset.mode === "world-cup" ? toFifaQuality100Url(imageUrl) : imageUrl, tmpIn);
             if (dataset.mode === "world-cup") {
@@ -486,7 +462,7 @@ async function startServer() {
               fs.copyFileSync(tmpOut, outPath);
               if (dataset.mode === "world-cup") {
                 processedPlayers[index].imageUrl =
-                  `/img/players-world-cup/${encodeURIComponent(normalizedTeamName)}/${encodeURIComponent(slug)}.png`;
+                  `/img/players-world-cup/${encodeURIComponent(normalizedTeamName)}/${encodeURIComponent(slug)}.webp`;
               }
             } else {
               throw new Error('rembg did not produce output');
@@ -611,6 +587,48 @@ async function startServer() {
     }
   });
 
+  app.post(["/api/admin/teams/:team/player-rename", "/api/world-cup/admin/teams/:team/player-rename"], (req, res) => {
+    try {
+      const dataset = getDatasetFromRequest(req);
+      const team = String(req.params.team || '').trim();
+      const fromDisplayName = String(req.body?.fromDisplayName || '').trim();
+      const toDisplayName = String(req.body?.toDisplayName || '').trim();
+      const imageUrl = String(req.body?.imageUrl || '').trim();
+
+      if (!team || !fromDisplayName || !toDisplayName || !imageUrl) {
+        return res.status(400).json({ error: 'Missing rename data' });
+      }
+      if (fromDisplayName === toDisplayName) {
+        return res.json({ success: true, imageUrl });
+      }
+      if (!imageUrl.startsWith('/img/')) {
+        return res.json({ success: true, imageUrl });
+      }
+
+      const imagePath = path.normalize(path.join(__dirname, 'public', imageUrl.replace(/^\/img\//, 'img/')));
+      const allowedRoot = path.normalize(dataset.playersImageDir);
+      if (!imagePath.startsWith(allowedRoot) || !fs.existsSync(imagePath)) {
+        return res.json({ success: true, imageUrl });
+      }
+
+      const ext = path.extname(imagePath);
+      const newSlug = slugify(toDisplayName);
+      if (!newSlug) {
+        return res.status(400).json({ error: 'Invalid target display name' });
+      }
+      const newPath = path.join(path.dirname(imagePath), `${newSlug}${ext}`);
+      if (imagePath !== newPath && !fs.existsSync(newPath)) {
+        fs.renameSync(imagePath, newPath);
+      }
+
+      const relativeImagePath = '/' + path.relative(path.join(__dirname, 'public'), newPath).replace(/\\/g, '/');
+      res.json({ success: true, imageUrl: relativeImagePath });
+    } catch (e) {
+      console.error('Player rename failed:', e);
+      res.status(500).json({ error: 'Failed to rename player image' });
+    }
+  });
+
   app.post(["/api/admin/teams/:team/delete", "/api/world-cup/admin/teams/:team/delete"], (req, res) => {
     try {
       const dataset = getDatasetFromRequest(req);
@@ -642,6 +660,57 @@ async function startServer() {
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ error: 'Failed to delete team' });
+    }
+  });
+
+  app.post(["/api/admin/teams/rename", "/api/world-cup/admin/teams/rename"], (req, res) => {
+    try {
+      const dataset = getDatasetFromRequest(req);
+      const from = String(req.body?.from || '').trim();
+      const to = String(req.body?.to || '').trim();
+
+      if (!from || !to) {
+        return res.status(400).json({ error: 'Missing team names' });
+      }
+      if (from === to) {
+        return res.json({ success: true });
+      }
+
+      const fromCsvPath = path.join(dataset.teamsDir, `${from}.csv`);
+      const toCsvPath = path.join(dataset.teamsDir, `${to}.csv`);
+      if (fs.existsSync(fromCsvPath) && !fs.existsSync(toCsvPath)) {
+        fs.renameSync(fromCsvPath, toCsvPath);
+      }
+
+      const fromImageDir = path.join(dataset.playersImageDir, from);
+      const toImageDir = path.join(dataset.playersImageDir, to);
+      if (fs.existsSync(fromImageDir) && !fs.existsSync(toImageDir)) {
+        fs.renameSync(fromImageDir, toImageDir);
+      }
+
+      if (fs.existsSync(toCsvPath)) {
+        const rows = readTeamPlayersCsv(dataset.teamsDir, to);
+        const updatedRows = rows.map((row: any) => {
+          const imageUrl = String(row['image-url'] || '');
+          if (!imageUrl) return row;
+          const encodedFrom = encodeURIComponent(from);
+          const encodedTo = encodeURIComponent(to);
+          return {
+            ...row,
+            'image-url': imageUrl.replace(`/img/${path.basename(dataset.playersImageDir)}/${encodedFrom}/`, `/img/${path.basename(dataset.playersImageDir)}/${encodedTo}/`),
+          };
+        });
+        const headers = ['name', 'display-name', 'image-url', 'role'];
+        const outLines = [headers.join(',')].concat(
+          updatedRows.map((row: any) => headers.map(header => csvEscape(String(row?.[header] ?? ''))).join(','))
+        );
+        fs.writeFileSync(toCsvPath, outLines.join("\n") + "\n");
+      }
+
+      res.json({ success: true });
+    } catch (e) {
+      console.error('Team rename failed:', e);
+      res.status(500).json({ error: 'Failed to rename team' });
     }
   });
 

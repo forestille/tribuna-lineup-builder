@@ -3,6 +3,7 @@ export interface Player {
   displayName: string;
   imageUrl: string;
   role: 'goalkeeper' | 'outfield';
+  teamName?: string;
 }
 
 export type AppMode = 'uefa' | 'world-cup';
@@ -16,7 +17,7 @@ export interface Team {
   linkedTeam?: string;
 }
 
-export type Formation = '3-5-2' | '4-2-3-1' | '4-1-2-3' | '3-4-3' | '4-4-2';
+export type Formation = '3-5-2' | '4-2-3-1' | '4-1-2-3' | '3-4-3' | '3-4-2-1' | '4-4-2';
 
 export interface Position {
   id: string;

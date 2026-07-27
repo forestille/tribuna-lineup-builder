@@ -10,6 +10,7 @@ type MetaRow = {
   glowColor: string;
   defaultFormation: string;
   linkedTeam: string;
+  _originalTeam?: string;
 };
 
 type PlayerRow = {
@@ -17,6 +18,8 @@ type PlayerRow = {
   'display-name': string;
   'image-url': string;
   role: string;
+  _originalDisplayName?: string;
+  _originalImageUrl?: string;
 };
 
 type FileEntry = {
@@ -67,7 +70,7 @@ export default function AdminPanel({ mode }: Props) {
     try {
       const res = await fetch(`${config.apiBase}/admin/meta`);
       const data = await res.json();
-      setMetaRows((data.rows || []) as MetaRow[]);
+      setMetaRows(((data.rows || []) as MetaRow[]).map(row => ({ ...row, _originalTeam: row.team })));
     } finally {
       setMetaLoading(false);
     }
@@ -79,7 +82,11 @@ export default function AdminPanel({ mode }: Props) {
     try {
       const res = await fetch(`${config.apiBase}/admin/teams/${encodeURIComponent(team)}/players`);
       const data = await res.json();
-      setTeamPlayers((data.rows || []) as PlayerRow[]);
+      setTeamPlayers(((data.rows || []) as PlayerRow[]).map(row => ({
+        ...row,
+        _originalDisplayName: row['display-name'],
+        _originalImageUrl: row['image-url'],
+      })));
     } finally {
       setPlayersLoading(false);
     }
@@ -135,10 +142,31 @@ export default function AdminPanel({ mode }: Props) {
   };
 
   const saveMeta = async () => {
+    const renames = metaRows
+      .map(row => ({
+        from: String(row._originalTeam || '').trim(),
+        to: String(row.team || '').trim(),
+      }))
+      .filter(({ from, to }) => from && to && from !== to);
+
+    for (const rename of renames) {
+      await fetch(`${config.apiBase}/admin/teams/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(rename),
+      });
+      if (teamName === rename.from) {
+        setTeamName(rename.to);
+      }
+    }
+
     await fetch(`${config.apiBase}/admin/meta`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ headers: ['team', 'background', 'glowColor', 'defaultFormation', 'linkedTeam'], rows: metaRows }),
+      body: JSON.stringify({
+        headers: ['team', 'background', 'glowColor', 'defaultFormation', 'linkedTeam'],
+        rows: metaRows.map(({ _originalTeam, ...row }) => row),
+      }),
     });
     await loadMeta();
     localStorage.setItem('teamsUpdated', String(Date.now()));
@@ -151,10 +179,37 @@ export default function AdminPanel({ mode }: Props) {
       return;
     }
     setErrors([]);
+    const rowsForSave = [...teamPlayers];
+    for (let index = 0; index < rowsForSave.length; index += 1) {
+      const row = rowsForSave[index];
+      const fromDisplayName = String(row._originalDisplayName || '').trim();
+      const toDisplayName = String(row['display-name'] || '').trim();
+      const imageUrl = String(row['image-url'] || '').trim();
+      if (!fromDisplayName || !toDisplayName || fromDisplayName === toDisplayName || !imageUrl) continue;
+
+      const res = await fetch(`${config.apiBase}/admin/teams/${encodeURIComponent(teamName)}/player-rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fromDisplayName, toDisplayName, imageUrl }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.imageUrl) {
+          rowsForSave[index] = {
+            ...row,
+            'image-url': data.imageUrl,
+            _originalImageUrl: data.imageUrl,
+          };
+        }
+      }
+    }
+
     await fetch(`${config.apiBase}/admin/teams/${encodeURIComponent(teamName)}/players`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rows: teamPlayers }),
+      body: JSON.stringify({
+        rows: rowsForSave.map(({ _originalDisplayName, _originalImageUrl, ...row }) => row),
+      }),
     });
     await loadPlayers(teamName);
     localStorage.setItem('teamsUpdated', String(Date.now()));
@@ -181,11 +236,18 @@ export default function AdminPanel({ mode }: Props) {
   };
 
   const addTeamRow = () => {
-    setMetaRows(prev => [...prev, { team: '', background: '', glowColor: '', defaultFormation: '', linkedTeam: '' }]);
+    setMetaRows(prev => [...prev, { team: '', background: '', glowColor: '', defaultFormation: '', linkedTeam: '', _originalTeam: '' }]);
   };
 
   const addPlayerRow = () => {
-    setTeamPlayers(prev => [...prev, { name: '', 'display-name': '', 'image-url': '', role: 'outfield' }]);
+    setTeamPlayers(prev => [...prev, {
+      name: '',
+      'display-name': '',
+      'image-url': '',
+      role: 'outfield',
+      _originalDisplayName: '',
+      _originalImageUrl: '',
+    }]);
   };
 
   const handleUpload = async () => {
@@ -381,7 +443,7 @@ export default function AdminPanel({ mode }: Props) {
             </button>
             {mode === 'world-cup' ? (
               <div className="mt-3 text-sm text-slate-600">
-                Portraits will be downloaded automatically to <span className="font-mono">/public/img/{config.preprocessFolder}/&lt;TEAM&gt;</span>, with FIFA quality forced to 100 and the lower 40% cropped off.
+                Portraits will be downloaded automatically to <span className="font-mono">/public/img/{config.preprocessFolder}/&lt;TEAM&gt;</span> as WebP files, with transparent padding removed first and then the top 1000px kept before resizing.
               </div>
             ) : (
               <div className="mt-3 flex items-start gap-2">
