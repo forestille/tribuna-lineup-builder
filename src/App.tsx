@@ -1,11 +1,11 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { Team, LineupState, Formation, Player, AppMode } from './types';
 import TeamManager from './components/TeamManager';
 import LineupPreview from './components/LineupPreview';
 import LogoSelectField, { type LogoOption } from './components/LogoSelectField';
 import { FORMATIONS, FORMATION_POSITIONS } from './constants';
 import { DEFAULT_LOGO_VALUES_BY_MODE } from './defaults';
-import { Layout, Image as ImageIcon, Users, Settings, Download, Search } from 'lucide-react';
+import { Layout, Image as ImageIcon, Users, Settings, Download, Search, Upload } from 'lucide-react';
 import { COMPETITION_CONFIG } from './competitionConfig';
 
 const placeholderAvatar =
@@ -38,7 +38,7 @@ const normalizeSearch = (value: string) =>
 const makeTemporaryPlayer = (value: string, role: Player['role']): Player => ({
   name: value.trim(),
   displayName: value.trim(),
-  imageUrl: '',
+  imageUrl: '/img/placeholder-player.webp',
   role,
 });
 
@@ -59,7 +59,7 @@ const getLocalCandidates = (teamName: string, displayName: string, folders: stri
 
 const getImageUrlLocalCandidate = (teamName: string, imageUrl: string) => {
   const raw = String(imageUrl || '').trim();
-  if (!raw || isRemoteUrl(raw)) return '';
+  if (!raw || isRemoteUrl(raw) || raw.startsWith('/') || raw.startsWith('blob:')) return raw;
   const teamFolder = teamName ? encodeURIComponent(teamName) : '';
   return teamFolder ? `/img/players/${teamFolder}/${encodeURIComponent(raw)}` : `/img/players/${encodeURIComponent(raw)}`;
 };
@@ -121,8 +121,10 @@ export default function App({ mode }: Props) {
   const [teamLogoOptions, setTeamLogoOptions] = useState<LogoOption[]>([]);
   const [searchTerm, setSearchTerm] = useState<Record<string, string>>({});
   const [openDropdown, setOpenDropdown] = useState<Record<string, boolean>>({});
+  const [photoTarget, setPhotoTarget] = useState<string | null>(null);
   const latestPlayersRef = useRef(state.players);
   const latestSearchTermRef = useRef(searchTerm);
+  const photoInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetch(config.backgroundsApiPath).then(res => res.json()).then(setBackgrounds);
@@ -174,6 +176,31 @@ const handleTeamSelect = (team: Team) => {
     if (!player) {
       setSearchTerm(prev => ({ ...prev, [posId]: '' }));
     }
+  };
+
+  const handlePhotoSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    const posId = photoTarget;
+    event.target.value = '';
+    setPhotoTarget(null);
+    if (!file || !posId || !file.type.startsWith('image/')) return;
+
+    const objectUrl = URL.createObjectURL(file);
+    setState(prev => {
+      const current = prev.players[posId];
+      if (!current) {
+        URL.revokeObjectURL(objectUrl);
+        return prev;
+      }
+      if (current.imageUrl.startsWith('blob:')) URL.revokeObjectURL(current.imageUrl);
+      return {
+        ...prev,
+        players: {
+          ...prev.players,
+          [posId]: { ...current, imageUrl: objectUrl },
+        },
+      };
+    });
   };
 
   const positions = FORMATION_POSITIONS[state.formation];
@@ -229,6 +256,13 @@ const handleTeamSelect = (team: Team) => {
 
           {currentTeam && (
             <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={handlePhotoSelected}
+              />
               {/* Formation & Background */}
               <section className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
                 <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
@@ -417,28 +451,47 @@ const handleTeamSelect = (team: Team) => {
                       )}
 
                       {state.players[pos.id] && (
-                        <div className="mt-2 flex items-center justify-between p-2 bg-indigo-50 rounded-lg border border-indigo-100">
-                          <div className="flex items-center gap-2 overflow-hidden">
-                            <Thumb
-                              sources={[
-                                ...getLocalCandidates(
-                                  getPlayerImageTeam(state.teamName, state.players[pos.id]),
-                                  state.players[pos.id]?.displayName || state.players[pos.id]?.name || '',
-                                  config.playerImageFolders
-                                ),
-                                ...(getImageUrlLocalCandidate(getPlayerImageTeam(state.teamName, state.players[pos.id]), state.players[pos.id]?.imageUrl || '') ? [getImageUrlLocalCandidate(getPlayerImageTeam(state.teamName, state.players[pos.id]), state.players[pos.id]?.imageUrl || '')] : []),
-                                ...(isRemoteUrl(state.players[pos.id]?.imageUrl || '') ? [state.players[pos.id]?.imageUrl] : []),
-                              ].filter(Boolean) as string[]}
-                              className="w-8 h-8 rounded-full object-cover"
-                            />
-                            <span className="text-sm font-semibold text-indigo-900 truncate">{state.players[pos.id]?.displayName}</span>
+                        <div className="mt-2 rounded-lg border border-indigo-100 bg-indigo-50 p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                              <Thumb
+                                sources={[
+                                  ...getLocalCandidates(
+                                    getPlayerImageTeam(state.teamName, state.players[pos.id]),
+                                    state.players[pos.id]?.displayName || state.players[pos.id]?.name || '',
+                                    config.playerImageFolders
+                                  ),
+                                  ...(getImageUrlLocalCandidate(getPlayerImageTeam(state.teamName, state.players[pos.id]), state.players[pos.id]?.imageUrl || '') ? [getImageUrlLocalCandidate(getPlayerImageTeam(state.teamName, state.players[pos.id]), state.players[pos.id]?.imageUrl || '')] : []),
+                                  ...(isRemoteUrl(state.players[pos.id]?.imageUrl || '') ? [state.players[pos.id]?.imageUrl] : []),
+                                ].filter(Boolean) as string[]}
+                                className="w-8 h-8 rounded-full object-cover"
+                              />
+                              <span className="truncate text-sm font-semibold text-indigo-900">{state.players[pos.id]?.displayName}</span>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPhotoTarget(pos.id);
+                                  photoInputRef.current?.click();
+                                }}
+                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                                title="Use a photo just for this lineup"
+                              >
+                                <Upload className="h-3.5 w-3.5" />
+                                Add photo
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updatePlayer(pos.id, null)}
+                                className="p-1 text-indigo-400 hover:text-indigo-600"
+                                aria-label={`Remove ${state.players[pos.id]?.displayName}`}
+                              >
+                                ✕
+                              </button>
+                            </div>
                           </div>
-                          <button 
-                            onClick={() => updatePlayer(pos.id, null)}
-                            className="text-indigo-400 hover:text-indigo-600 p-1"
-                          >
-                            ✕
-                          </button>
+                          <p className="mt-1 text-xs text-slate-500">Photos stay only in this browser tab and are not uploaded.</p>
                         </div>
                       )}
 

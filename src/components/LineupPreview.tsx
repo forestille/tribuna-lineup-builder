@@ -411,7 +411,7 @@ export default function LineupPreview({ state, mode }: Props) {
     const raw = (p?.imageUrl || '').trim();
     if (raw) {
       const isPngWebp = /\.(png|webp)$/i.test(raw);
-      if (/^https?:\/\//i.test(raw) || raw.startsWith('/')) {
+      if (/^https?:\/\//i.test(raw) || raw.startsWith('/') || raw.startsWith('blob:')) {
         addCandidate(raw, isPngWebp, !isPngWebp, !isPngWebp);
         return candidates;
       }
