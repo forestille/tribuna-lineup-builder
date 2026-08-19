@@ -7,16 +7,155 @@ import https from "https";
 import http from "http";
 import os from "os";
 import { existsSync } from "fs";
-import { execFile } from "child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "child_process";
 import { promisify } from "util";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const execFileAsync = promisify(execFile);
 
+const getPythonBin = () => process.env.PYTHON_BIN || "python3";
+
+type RembgJobOptions = {
+  alphaMatting?: boolean;
+  maxInputSize?: number;
+};
+
+type PendingRembgJob = {
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+};
+
+class RembgWorker {
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private stdoutBuffer = "";
+  private sequence = 0;
+  private pending = new Map<string, PendingRembgJob>();
+
+  constructor(
+    private readonly pythonBin: string,
+    private readonly scriptPath: string,
+  ) {}
+
+  start() {
+    if (this.child) return this.child;
+
+    const numbaCacheDir = process.env.NUMBA_CACHE_DIR || path.join(os.tmpdir(), "lineup-numba-cache");
+    fs.mkdirSync(numbaCacheDir, { recursive: true });
+    const child = spawn(this.pythonBin, [this.scriptPath, "--worker"], {
+      env: {
+        ...process.env,
+        NUMBA_CACHE_DIR: numbaCacheDir,
+        OMP_NUM_THREADS: process.env.OMP_NUM_THREADS || "2",
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    this.child = child;
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => this.handleStdout(chunk));
+    child.stderr.on("data", (chunk: string) => {
+      const message = chunk.trim();
+      if (message) console.error(`[rembg] ${message}`);
+    });
+    child.once("error", error => this.handleExit(child, error));
+    child.once("exit", (code, signal) => {
+      this.handleExit(
+        child,
+        new Error(`Background-removal worker exited (${signal || (code ?? "unknown")}).`),
+      );
+    });
+    return child;
+  }
+
+  process(inputPath: string, outputPath: string, options: RembgJobOptions = {}) {
+    const child = this.start();
+    const id = `${Date.now()}-${++this.sequence}`;
+    const configuredTimeout = Number(process.env.REMBG_TIMEOUT_MS);
+    const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0
+      ? configuredTimeout
+      : 180_000;
+
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.handleExit(child, new Error(`Background removal timed out after ${timeoutMs}ms.`));
+        child.kill();
+      }, timeoutMs);
+      this.pending.set(id, { resolve, reject, timer });
+
+      const request = JSON.stringify({
+        id,
+        inputPath,
+        outputPath,
+        alphaMatting: options.alphaMatting ?? false,
+        maxInputSize: options.maxInputSize ?? 0,
+      });
+      child.stdin.write(`${request}\n`, error => {
+        if (!error) return;
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.reject(error);
+      });
+    });
+  }
+
+  private handleStdout(chunk: string) {
+    this.stdoutBuffer += chunk;
+    const lines = this.stdoutBuffer.split("\n");
+    this.stdoutBuffer = lines.pop() || "";
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      try {
+        const message = JSON.parse(line) as {
+          type?: string;
+          id?: string;
+          ok?: boolean;
+          error?: string;
+          model?: string;
+        };
+        if (message.type === "ready") {
+          console.log(`Background-removal worker ready (${message.model || "default model"}).`);
+          continue;
+        }
+        if (!message.id) continue;
+        const pending = this.pending.get(message.id);
+        if (!pending) continue;
+        clearTimeout(pending.timer);
+        this.pending.delete(message.id);
+        if (message.ok) pending.resolve();
+        else pending.reject(new Error(message.error || "Background removal failed."));
+      } catch {
+        console.error(`[rembg] Unexpected worker output: ${line}`);
+      }
+    }
+  }
+
+  private handleExit(child: ChildProcessWithoutNullStreams, error: Error) {
+    if (this.child !== child) return;
+    this.child = null;
+    this.stdoutBuffer = "";
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pending.clear();
+  }
+}
+
 async function startServer() {
   const app = express();
   const PORT = Number(process.env.PORT) || 3000;
+  const rembgScript = path.join(__dirname, "scripts", "rembg_remove.py");
+  const rembgWorker = new RembgWorker(getPythonBin(), rembgScript);
+
+  if (existsSync(rembgScript) && process.env.REMBG_PRELOAD !== "0") {
+    rembgWorker.start();
+  }
 
   app.use(express.json({ limit: '10mb' }));
 
@@ -32,13 +171,19 @@ async function startServer() {
       const inputPath = path.join(tempDir, 'input.img');
       const outputPath = path.join(tempDir, 'output.png');
       try {
-        const rembgScript = path.join(__dirname, 'scripts', 'rembg_remove.py');
         if (!existsSync(rembgScript)) {
           return res.status(500).json({ error: 'Background removal is not available.' });
         }
         await fs.promises.writeFile(inputPath, req.body);
-        await execFileAsync(getPythonBin(), [rembgScript, inputPath, outputPath]);
+        const configuredMaxSize = Number(process.env.REMBG_TEMP_MAX_INPUT_SIZE);
+        await rembgWorker.process(inputPath, outputPath, {
+          alphaMatting: process.env.REMBG_TEMP_ALPHA_MATTING === "1",
+          maxInputSize: Number.isFinite(configuredMaxSize) && configuredMaxSize > 0
+            ? configuredMaxSize
+            : 1280,
+        });
         const output = await fs.promises.readFile(outputPath);
+        res.setHeader('Cache-Control', 'no-store');
         res.type('png').send(output);
       } catch (error) {
         console.error('Temporary player background removal failed:', error);
@@ -114,11 +259,6 @@ async function startServer() {
       });
       req.on('error', reject);
     });
-  };
-
-  const getPythonBin = () => {
-    if (process.env.PYTHON_BIN) return process.env.PYTHON_BIN;
-    return "python3";
   };
 
   const toFifaQuality100Url = (rawUrl: string) => {
@@ -442,7 +582,6 @@ async function startServer() {
         res.write(JSON.stringify({ type: 'debug', preprocessUefa: preprocessFlag, mode: dataset.mode }) + "\n");
         const teamOutDir = path.join(dataset.playersImageDir, normalizedTeamName);
         if (!fs.existsSync(teamOutDir)) fs.mkdirSync(teamOutDir, { recursive: true });
-        const rembgScript = path.join(__dirname, "scripts", "rembg_remove.py");
         const processedPlayers = players.map((p: any) => ({
           name: String(p.name || '').trim(),
           displayName: String(p.displayName || '').trim(),
@@ -484,8 +623,13 @@ async function startServer() {
             if (dataset.mode === "world-cup") {
               await cropWorldCupPortrait(tmpIn, tmpOut);
             } else {
-              const pythonBin = getPythonBin();
-              await execFileAsync(pythonBin, [rembgScript, tmpIn, tmpOut]);
+              const configuredMaxSize = Number(process.env.REMBG_IMPORT_MAX_INPUT_SIZE);
+              await rembgWorker.process(tmpIn, tmpOut, {
+                alphaMatting: process.env.REMBG_ALPHA_MATTING !== "0",
+                maxInputSize: Number.isFinite(configuredMaxSize) && configuredMaxSize > 0
+                  ? configuredMaxSize
+                  : 1920,
+              });
             }
             if (fs.existsSync(tmpOut)) {
               fs.copyFileSync(tmpOut, outPath);
