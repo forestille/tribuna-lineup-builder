@@ -2,10 +2,11 @@ import { useState, useEffect, useRef, type ChangeEvent } from 'react';
 import { Team, LineupState, Formation, Player, AppMode } from './types';
 import TeamManager from './components/TeamManager';
 import LineupPreview from './components/LineupPreview';
+import PlayerPhotoEditor, { type PlayerPhotoCrop, type PlayerPhotoEditorResult } from './components/PlayerPhotoEditor';
 import LogoSelectField, { type LogoOption } from './components/LogoSelectField';
 import { FORMATIONS, FORMATION_POSITIONS } from './constants';
 import { DEFAULT_LOGO_VALUES_BY_MODE } from './defaults';
-import { Layout, Image as ImageIcon, Users, Settings, Download, Search, Upload } from 'lucide-react';
+import { Layout, Image as ImageIcon, Users, Settings, Download, Pencil, Search, Upload } from 'lucide-react';
 import { COMPETITION_CONFIG } from './competitionConfig';
 
 const placeholderAvatar =
@@ -40,6 +41,7 @@ const makeTemporaryPlayer = (value: string, role: Player['role']): Player => ({
   displayName: value.trim(),
   imageUrl: '/img/placeholder-player.webp',
   role,
+  isTemporary: true,
 });
 
 const getLocalCandidates = (teamName: string, displayName: string, folders: string[]) => {
@@ -122,9 +124,12 @@ export default function App({ mode }: Props) {
   const [searchTerm, setSearchTerm] = useState<Record<string, string>>({});
   const [openDropdown, setOpenDropdown] = useState<Record<string, boolean>>({});
   const [photoTarget, setPhotoTarget] = useState<string | null>(null);
+  const [photoEditor, setPhotoEditor] = useState<{ posId: string; sourceUrl: string; revokeSourceOnClose: boolean } | null>(null);
   const latestPlayersRef = useRef(state.players);
   const latestSearchTermRef = useRef(searchTerm);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const photoSourceUrlsRef = useRef<Record<string, string>>({});
+  const photoCropSettingsRef = useRef<Record<string, PlayerPhotoCrop>>({});
 
   useEffect(() => {
     fetch(config.backgroundsApiPath).then(res => res.json()).then(setBackgrounds);
@@ -169,10 +174,22 @@ const handleTeamSelect = (team: Team) => {
   };
 
   const updatePlayer = (posId: string, player: Player | null) => {
-    setState(prev => ({
-      ...prev,
-      players: { ...prev.players, [posId]: player }
-    }));
+    const editableSourceUrl = photoSourceUrlsRef.current[posId];
+    if (editableSourceUrl) {
+      URL.revokeObjectURL(editableSourceUrl);
+      delete photoSourceUrlsRef.current[posId];
+    }
+    delete photoCropSettingsRef.current[posId];
+    setState(prev => {
+      const previous = prev.players[posId];
+      if (previous?.imageUrl.startsWith('blob:') && previous.imageUrl !== player?.imageUrl) {
+        URL.revokeObjectURL(previous.imageUrl);
+      }
+      return {
+        ...prev,
+        players: { ...prev.players, [posId]: player }
+      };
+    });
     if (!player) {
       setSearchTerm(prev => ({ ...prev, [posId]: '' }));
     }
@@ -185,14 +202,52 @@ const handleTeamSelect = (team: Team) => {
     setPhotoTarget(null);
     if (!file || !posId || !file.type.startsWith('image/')) return;
 
-    const objectUrl = URL.createObjectURL(file);
+    const current = state.players[posId];
+    if (!current?.isTemporary) return;
+    setPhotoEditor({ posId, sourceUrl: URL.createObjectURL(file), revokeSourceOnClose: true });
+  };
+
+  const openPlayerPhotoEditor = (posId: string) => {
+    const current = state.players[posId];
+    if (!current?.isTemporary) return;
+    if (current.imageUrl.startsWith('blob:')) {
+      setPhotoEditor({
+        posId,
+        sourceUrl: photoSourceUrlsRef.current[posId] || current.imageUrl,
+        revokeSourceOnClose: false,
+      });
+      return;
+    }
+    setPhotoTarget(posId);
+    photoInputRef.current?.click();
+  };
+
+  const closePhotoEditor = () => {
+    if (photoEditor?.revokeSourceOnClose) URL.revokeObjectURL(photoEditor.sourceUrl);
+    setPhotoEditor(null);
+  };
+
+  const applyEditedPhoto = ({ blob, sourceBlob, crop }: PlayerPhotoEditorResult) => {
+    if (!photoEditor) return;
+    const { posId, sourceUrl, revokeSourceOnClose } = photoEditor;
+    const objectUrl = URL.createObjectURL(blob);
+    const editableSourceUrl = URL.createObjectURL(sourceBlob);
+    const currentPlayer = state.players[posId];
+    if (!currentPlayer?.isTemporary) {
+      URL.revokeObjectURL(objectUrl);
+      URL.revokeObjectURL(editableSourceUrl);
+      if (revokeSourceOnClose) URL.revokeObjectURL(sourceUrl);
+      setPhotoEditor(null);
+      return;
+    }
+    if (currentPlayer.imageUrl.startsWith('blob:')) URL.revokeObjectURL(currentPlayer.imageUrl);
+    const previousEditableSourceUrl = photoSourceUrlsRef.current[posId];
+    if (previousEditableSourceUrl) URL.revokeObjectURL(previousEditableSourceUrl);
+    photoSourceUrlsRef.current[posId] = editableSourceUrl;
+    photoCropSettingsRef.current[posId] = crop;
     setState(prev => {
       const current = prev.players[posId];
-      if (!current) {
-        URL.revokeObjectURL(objectUrl);
-        return prev;
-      }
-      if (current.imageUrl.startsWith('blob:')) URL.revokeObjectURL(current.imageUrl);
+      if (!current?.isTemporary) return prev;
       return {
         ...prev,
         players: {
@@ -201,6 +256,8 @@ const handleTeamSelect = (team: Team) => {
         },
       };
     });
+    if (revokeSourceOnClose) URL.revokeObjectURL(sourceUrl);
+    setPhotoEditor(null);
   };
 
   const positions = FORMATION_POSITIONS[state.formation];
@@ -238,6 +295,7 @@ const handleTeamSelect = (team: Team) => {
   };
 
   return (
+    <>
     <div className="min-h-screen bg-slate-50 flex flex-col lg:flex-row">
       {/* Sidebar Controls */}
       <div className="w-full lg:w-1/2 p-4 lg:p-8 overflow-y-auto lg:h-screen border-r border-slate-200">
@@ -333,12 +391,12 @@ const handleTeamSelect = (team: Team) => {
                       </div>
                       <div>
                         <label className="block text-xs font-bold uppercase text-slate-400 mb-1">Matchday / Stage Name</label>
-                        <input 
-                          type="text" 
-                          className="w-full p-2 border border-slate-300 rounded-lg"
+                        <textarea
+                          rows={3}
+                          className="h-20 w-full resize-y rounded-lg border border-slate-300 p-2"
                           value={state.matchday}
                           onChange={(e) => setState(prev => ({ ...prev, matchday: e.target.value }))}
-                          placeholder="e.g. QUARTER-FINAL"
+                          placeholder={'e.g. QUARTER-FINAL\nSecond line'}
                         />
                       </div>
                     </>
@@ -469,18 +527,17 @@ const handleTeamSelect = (team: Team) => {
                               <span className="truncate text-sm font-semibold text-indigo-900">{state.players[pos.id]?.displayName}</span>
                             </div>
                             <div className="flex shrink-0 items-center gap-1">
-                              <button
+                              {state.players[pos.id]?.isTemporary && <button
                                 type="button"
-                                onClick={() => {
-                                  setPhotoTarget(pos.id);
-                                  photoInputRef.current?.click();
-                                }}
+                                onClick={() => openPlayerPhotoEditor(pos.id)}
                                 className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
-                                title="Use a photo just for this lineup"
+                                title={state.players[pos.id]?.imageUrl.startsWith('blob:') ? 'Adjust the current crop' : 'Use a photo just for this lineup'}
                               >
-                                <Upload className="h-3.5 w-3.5" />
-                                Add photo
-                              </button>
+                                {state.players[pos.id]?.imageUrl.startsWith('blob:')
+                                  ? <Pencil className="h-3.5 w-3.5" />
+                                  : <Upload className="h-3.5 w-3.5" />}
+                                {state.players[pos.id]?.imageUrl.startsWith('blob:') ? 'Edit image' : 'Add photo'}
+                              </button>}
                               <button
                                 type="button"
                                 onClick={() => updatePlayer(pos.id, null)}
@@ -491,7 +548,7 @@ const handleTeamSelect = (team: Team) => {
                               </button>
                             </div>
                           </div>
-                          <p className="mt-1 text-xs text-slate-500">Photos stay only in this browser tab and are not uploaded.</p>
+                          {state.players[pos.id]?.isTemporary && <p className="mt-1 text-xs text-slate-500">Photos stay only in this browser tab and are not uploaded.</p>}
                         </div>
                       )}
 
@@ -547,5 +604,15 @@ const handleTeamSelect = (team: Team) => {
         </div>
       </div>
     </div>
+    {photoEditor && state.players[photoEditor.posId]?.isTemporary && (
+      <PlayerPhotoEditor
+        playerName={state.players[photoEditor.posId]?.displayName || 'Player'}
+        sourceUrl={photoEditor.sourceUrl}
+        initialCrop={photoCropSettingsRef.current[photoEditor.posId]}
+        onCancel={closePhotoEditor}
+        onApply={applyEditedPhoto}
+      />
+    )}
+    </>
   );
 }

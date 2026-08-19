@@ -20,6 +20,35 @@ async function startServer() {
 
   app.use(express.json({ limit: '10mb' }));
 
+  app.post(
+    '/api/player-image/remove-background',
+    express.raw({ type: ['image/*', 'application/octet-stream'], limit: '15mb' }),
+    async (req, res) => {
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        return res.status(400).json({ error: 'An image file is required.' });
+      }
+
+      const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'lineup-player-'));
+      const inputPath = path.join(tempDir, 'input.img');
+      const outputPath = path.join(tempDir, 'output.png');
+      try {
+        const rembgScript = path.join(__dirname, 'scripts', 'rembg_remove.py');
+        if (!existsSync(rembgScript)) {
+          return res.status(500).json({ error: 'Background removal is not available.' });
+        }
+        await fs.promises.writeFile(inputPath, req.body);
+        await execFileAsync(getPythonBin(), [rembgScript, inputPath, outputPath]);
+        const output = await fs.promises.readFile(outputPath);
+        res.type('png').send(output);
+      } catch (error) {
+        console.error('Temporary player background removal failed:', error);
+        res.status(500).json({ error: 'Background removal failed.' });
+      } finally {
+        await fs.promises.rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   const parseCsvLine = (line: string) => {
     const result: string[] = [];
     let current = '';

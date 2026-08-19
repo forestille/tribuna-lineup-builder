@@ -4,6 +4,7 @@ export interface Player {
   imageUrl: string;
   role: 'goalkeeper' | 'outfield';
   teamName?: string;
+  isTemporary?: boolean;
 }
 
 export type AppMode = 'uefa' | 'world-cup';

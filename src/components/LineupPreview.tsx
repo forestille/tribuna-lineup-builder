@@ -2,6 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import { LineupState, Player, AppMode } from '../types';
 import { FORMATION_POSITIONS } from '../constants';
 import { COMPETITION_CONFIG } from '../competitionConfig';
+import {
+  drawPlayerTag,
+  PLAYER_TAG_BOTTOM_OFFSET,
+  PLAYER_TARGET_HEIGHT,
+  PLAYER_Y_OFFSET,
+} from '../playerBox';
 
 interface Props {
   state: LineupState;
@@ -110,7 +116,7 @@ export default function LineupPreview({ state, mode }: Props) {
         }
 
         if (!state.possibleLineup) {
-          let logoCenterX: number | null = null;
+          const headerCenterX = 140;
           if (state.tournamentLogo) {
             try {
               const tLogo = await loadLogoImage(state.tournamentLogo, config.tournamentLogoFolders);
@@ -119,7 +125,7 @@ export default function LineupPreview({ state, mode }: Props) {
               const scale = Math.min(maxH / tLogo.height, maxW / tLogo.width);
               const width = tLogo.width * scale;
               const logoH = tLogo.height * scale;
-              const logoX = 70;
+              const logoX = headerCenterX - width / 2;
               const logoY = 55 + (137 - logoH) / 2;
               if (state.tournamentLogoMonochrome) {
                 const off = document.createElement('canvas');
@@ -140,13 +146,11 @@ export default function LineupPreview({ state, mode }: Props) {
               } else {
                 baseCtx.drawImage(tLogo, logoX, logoY, width, logoH);
               }
-              logoCenterX = logoX + width / 2;
             } catch (e) { console.error("Logo error", e); }
           }
 
           if (state.matchday) {
             const text = state.matchday;
-            const centerX = (logoCenterX ?? 70);
             const maxWidth = 380;
             baseCtx.font = 'bold 30px "Kelson Sans", sans-serif';
             baseCtx.textAlign = 'center';
@@ -154,11 +158,10 @@ export default function LineupPreview({ state, mode }: Props) {
             const lines = wrapText(baseCtx, text, maxWidth);
             const lineHeight = 34;
             const textStartY = 225;
-            const startY = textStartY - (lines.length - 1) * (lineHeight / 2);
             baseCtx.fillStyle = 'white';
             lines.forEach((line, i) => {
-              const y = startY + i * lineHeight;
-              baseCtx.fillText(line, centerX, y);
+              const y = textStartY + i * lineHeight;
+              baseCtx.fillText(line, headerCenterX, y);
             });
           }
         } else {
@@ -410,7 +413,7 @@ export default function LineupPreview({ state, mode }: Props) {
 
     const raw = (p?.imageUrl || '').trim();
     if (raw) {
-      const isPngWebp = /\.(png|webp)$/i.test(raw);
+      const isPngWebp = /\.(png|webp)$/i.test(raw) || raw.startsWith('blob:');
       if (/^https?:\/\//i.test(raw) || raw.startsWith('/') || raw.startsWith('blob:')) {
         addCandidate(raw, isPngWebp, !isPngWebp, !isPngWebp);
         return candidates;
@@ -459,9 +462,9 @@ export default function LineupPreview({ state, mode }: Props) {
   const drawPlayerGlow = async (ctx: CanvasRenderingContext2D, x: number, y: number, player: Player | null) => {
     const candidates = resolvePlayerImageCandidates(player);
     const targetHeight = 180;
-    const localPlayerTargetHeight = 190;
-    const localPlayerYOffset = -10;
-    const verticalOffset = 83;
+    const localPlayerTargetHeight = PLAYER_TARGET_HEIGHT;
+    const localPlayerYOffset = PLAYER_Y_OFFSET;
+    const verticalOffset = PLAYER_TAG_BOTTOM_OFFSET;
     const glow = (state.glowColor || '').trim();
     if (!glow || candidates.length === 0) return;
 
@@ -530,11 +533,9 @@ export default function LineupPreview({ state, mode }: Props) {
   const drawPlayerImageAndTag = async (ctx: CanvasRenderingContext2D, x: number, y: number, player: Player | null) => {
     const candidates = resolvePlayerImageCandidates(player);
     const targetHeight = 180;
-    const localPlayerTargetHeight = 190;
-    const localPlayerYOffset = -10;
-    const tagWidth = 223;
-    const tagHeight = 37;
-    const verticalOffset = 83;
+    const localPlayerTargetHeight = PLAYER_TARGET_HEIGHT;
+    const localPlayerYOffset = PLAYER_Y_OFFSET;
+    const verticalOffset = PLAYER_TAG_BOTTOM_OFFSET;
       const loaded = await loadCandidateImage(candidates);
       if (loaded) {
       const { img, fromDisplay, circlePos, circleMask } = loaded;
@@ -586,20 +587,7 @@ export default function LineupPreview({ state, mode }: Props) {
       } catch {
         tagImg = await loadImage(withAssetVersion('/img/texbg.png', assetVersion));
       }
-      const tagX = x - tagWidth / 2;
-      const tagY = y - tagHeight + verticalOffset;
-      const tagCenterY = tagY + tagHeight / 2;
-      ctx.drawImage(tagImg, tagX, tagY, tagWidth, tagHeight);
-      
-      if (player) {
-        ctx.fillStyle = 'black';
-        const name = player.displayName.toUpperCase();
-        const fontSize = name.length >= 12 ? 24.5 : name.length >= 10 ? 26 : 29.25;
-        ctx.font = `bold ${fontSize}px "Kelson Sans", sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(name, x - 3, tagCenterY + 5);
-      }
+      drawPlayerTag(ctx, tagImg, x, y, player?.displayName || '');
     } catch (e) {
       // Fallback if text background is missing
       if (player) {
@@ -613,9 +601,13 @@ export default function LineupPreview({ state, mode }: Props) {
   };
 
   const wrapText = (ctx: CanvasRenderingContext2D, text: string, maxWidth: number) => {
-    const explicit = text.split('\n').map(t => t.trim()).filter(Boolean);
     const lines: string[] = [];
-    for (const block of explicit.length ? explicit : [text]) {
+    for (const rawBlock of text.split('\n')) {
+      const block = rawBlock.trim();
+      if (!block) {
+        lines.push('');
+        continue;
+      }
       const words = block.split(/\s+/);
       let line = '';
       for (const word of words) {
