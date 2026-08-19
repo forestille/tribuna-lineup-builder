@@ -5,6 +5,7 @@ import {defineConfig, loadEnv} from 'vite';
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
+  const allowedHosts = ['lineup.hidenfree.com', 'localhost', '127.0.0.1'];
   return {
     plugins: [react(), tailwindcss()],
     define: {
@@ -17,9 +18,9 @@ export default defineConfig(({mode}) => {
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      // File watching is restricted to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
-      allowedHosts: true,
+      allowedHosts,
       port: Number(process.env.PORT) || 24622,
       host: '0.0.0.0',
       watch: {
@@ -29,6 +30,10 @@ export default defineConfig(({mode}) => {
           '**/data/**',
         ],
       },
+    },
+    preview: {
+      allowedHosts,
+      host: '0.0.0.0',
     },
   };
 });
