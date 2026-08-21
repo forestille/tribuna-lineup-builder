@@ -5,17 +5,43 @@
 }
 
 @font-face {
-  font-family: 'Kelson Sans Bold';
-  src: url('https://fonts.cdnfonts.com/s/14899/KelsonSans-Bold.woff') format('woff');
-  font-weight: bold;
+  font-family: 'Kelson Sans';
+  src: url('/fonts/Kelson%20Sans%20Light.otf') format('opentype');
+  font-weight: 300;
   font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Kelson Sans';
+  src: url('/fonts/Kelson%20Sans%20Regular.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Kelson Sans';
+  src: url('/fonts/Kelson%20Sans%20Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: 'Kelson Sans Bold';
+  src: url('/fonts/Kelson%20Sans%20Bold.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
 }
 
 @font-face {
   font-family: 'HeadingNowTrial 57 ExtraBold';
   src: url('/fonts/HeadingNowTrial-57Extrabold.ttf') format('truetype');
-  font-weight: 800;
+  font-weight: 900;
   font-style: normal;
+  font-display: block;
 }
 
 body {
