@@ -89,7 +89,9 @@ const getCropMetrics = (bounds: VisibleBounds, zoom: number, offset: CropOffset)
 
 const clampOffset = (bounds: VisibleBounds, zoom: number, offset: CropOffset): CropOffset => {
   const { drawWidth, drawHeight } = getCropMetrics(bounds, zoom, { x: 0, y: 0 });
-  const maxX = Math.max(0, (drawWidth - OUTPUT_WIDTH) / 2);
+  // Wider images can move until their edge reaches the crop edge. Narrower
+  // images can move across the otherwise-empty horizontal space.
+  const maxX = Math.abs(drawWidth - OUTPUT_WIDTH) / 2;
   const maxY = Math.max(0, (drawHeight - OUTPUT_HEIGHT) / 2);
   return {
     x: Math.max(-maxX, Math.min(maxX, offset.x)),
@@ -335,7 +337,6 @@ export default function PlayerPhotoEditor({ playerName, sourceUrl, initialCrop, 
             <button type="button" onClick={resetCrop} className="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-slate-300 px-3 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"><RotateCcw className="h-4 w-4" /> Reset crop</button>
             <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4">
               <h3 className="text-sm font-bold text-indigo-950">Background removal</h3>
-              <p className="mt-1 text-xs leading-5 text-indigo-800">Uses the existing UEFA player cutout tool. Temporary files are deleted immediately.</p>
               <button type="button" onClick={removeBackground} disabled={isRemoving} className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3 py-2.5 text-sm font-semibold text-white disabled:opacity-60">
                 {isRemoving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Eraser className="h-4 w-4" />}
                 {isRemoving ? 'Removing background…' : 'Remove background'}

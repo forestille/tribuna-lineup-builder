@@ -4,6 +4,7 @@ import { ChevronDown, Link as LinkIcon, Search } from 'lucide-react';
 export type LogoOption = {
   name: string;
   url: string;
+  category?: string;
 };
 
 type Props = {
@@ -40,8 +41,44 @@ export default function LogoSelectField({
   const filteredOptions = useMemo(() => {
     const term = search.trim().toLowerCase();
     if (!term) return options;
-    return options.filter(option => option.name.toLowerCase().includes(term));
+    return options.filter(option =>
+      option.name.toLowerCase().includes(term) || option.category?.toLowerCase().includes(term)
+    );
   }, [options, search]);
+
+  const hasCategories = useMemo(
+    () => options.some(option => Boolean(option.category?.trim())),
+    [options]
+  );
+
+  const groupedOptions = useMemo(() => {
+    const groups = new Map<string, LogoOption[]>();
+    filteredOptions.forEach(option => {
+      const category = option.category?.trim() || 'Other';
+      const group = groups.get(category) || [];
+      group.push(option);
+      groups.set(category, group);
+    });
+    return Array.from(groups.entries());
+  }, [filteredOptions]);
+
+  const chooseOption = (option: LogoOption) => {
+    onChange(getOptionValue(option));
+    setUseCustom(false);
+    setIsOpen(false);
+    setSearch('');
+  };
+
+  const renderOption = (option: LogoOption) => (
+    <button
+      key={`${option.category || ''}-${option.name}-${option.url}`}
+      type="button"
+      className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 border-b border-slate-50 last:border-b-0"
+      onClick={() => chooseOption(option)}
+    >
+      {option.name}
+    </button>
+  );
 
   return (
     <div>
@@ -53,7 +90,9 @@ export default function LogoSelectField({
           onClick={() => setIsOpen(open => !open)}
         >
           <span className="truncate text-sm text-slate-700">
-            {selectedOption?.name || (value ? 'Custom URL selected' : 'Choose from saved logos...')}
+            {selectedOption
+              ? `${selectedOption.category ? `${selectedOption.category} · ` : ''}${selectedOption.name}`
+              : (value ? 'Custom URL selected' : 'Choose from saved logos...')}
           </span>
           <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
@@ -70,22 +109,15 @@ export default function LogoSelectField({
                 placeholder={placeholder}
               />
             </div>
-            <div className="max-h-44 overflow-y-auto border border-slate-100 rounded-lg">
-              {filteredOptions.length > 0 ? filteredOptions.map(option => (
-                <button
-                  key={`${option.name}-${option.url}`}
-                  type="button"
-                  className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 border-b border-slate-50 last:border-b-0"
-                  onClick={() => {
-                    onChange(getOptionValue(option));
-                    setUseCustom(false);
-                    setIsOpen(false);
-                    setSearch('');
-                  }}
-                >
-                  {option.name}
-                </button>
-              )) : (
+            <div className="max-h-64 overflow-y-auto border border-slate-100 rounded-lg">
+              {filteredOptions.length > 0 ? (hasCategories ? groupedOptions.map(([category, categoryOptions]) => (
+                <div key={category}>
+                  <div className="sticky top-0 z-[1] border-y border-slate-200 bg-slate-100 px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-slate-500 first:border-t-0">
+                    {category}
+                  </div>
+                  {categoryOptions.map(renderOption)}
+                </div>
+              )) : filteredOptions.map(renderOption)) : (
                 <div className="px-3 py-2 text-sm text-slate-500">No saved logos found</div>
               )}
             </div>

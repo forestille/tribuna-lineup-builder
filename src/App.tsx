@@ -5,8 +5,7 @@ import LineupPreview from './components/LineupPreview';
 import PlayerPhotoEditor, { type PlayerPhotoCrop, type PlayerPhotoEditorResult } from './components/PlayerPhotoEditor';
 import LogoSelectField, { type LogoOption } from './components/LogoSelectField';
 import { FORMATIONS, FORMATION_POSITIONS } from './constants';
-import { DEFAULT_LOGO_VALUES_BY_MODE } from './defaults';
-import { Layout, Image as ImageIcon, Users, Settings, Download, Pencil, Search, Upload } from 'lucide-react';
+import { ClipboardPaste, Layout, Image as ImageIcon, Users, Settings, Download, Pencil, Search, Upload } from 'lucide-react';
 import { COMPETITION_CONFIG } from './competitionConfig';
 
 const placeholderAvatar =
@@ -105,11 +104,11 @@ export default function App({ mode }: Props) {
     formation: '4-2-3-1',
     players: {},
     subs: '',
-    tournamentLogo: DEFAULT_LOGO_VALUES_BY_MODE[mode].tournamentLogo,
+    tournamentLogo: '',
     tournamentLogoMonochrome: true,
-    matchday: DEFAULT_LOGO_VALUES_BY_MODE[mode].matchday,
-    homeLogo: DEFAULT_LOGO_VALUES_BY_MODE[mode].homeLogo,
-    awayLogo: DEFAULT_LOGO_VALUES_BY_MODE[mode].awayLogo,
+    matchday: '',
+    homeLogo: '',
+    awayLogo: '',
     background: '',
     glowColor: '',
     possibleLineup: false,
@@ -124,6 +123,7 @@ export default function App({ mode }: Props) {
   const [searchTerm, setSearchTerm] = useState<Record<string, string>>({});
   const [openDropdown, setOpenDropdown] = useState<Record<string, boolean>>({});
   const [photoTarget, setPhotoTarget] = useState<string | null>(null);
+  const [photoPasteError, setPhotoPasteError] = useState<Record<string, string>>({});
   const [photoEditor, setPhotoEditor] = useState<{ posId: string; sourceUrl: string; revokeSourceOnClose: boolean } | null>(null);
   const latestPlayersRef = useRef(state.players);
   const latestSearchTermRef = useRef(searchTerm);
@@ -180,6 +180,7 @@ const handleTeamSelect = (team: Team) => {
       delete photoSourceUrlsRef.current[posId];
     }
     delete photoCropSettingsRef.current[posId];
+    setPhotoPasteError(prev => ({ ...prev, [posId]: '' }));
     setState(prev => {
       const previous = prev.players[posId];
       if (previous?.imageUrl.startsWith('blob:') && previous.imageUrl !== player?.imageUrl) {
@@ -204,7 +205,57 @@ const handleTeamSelect = (team: Team) => {
 
     const current = state.players[posId];
     if (!current?.isTemporary) return;
+    setPhotoPasteError(prev => ({ ...prev, [posId]: '' }));
     setPhotoEditor({ posId, sourceUrl: URL.createObjectURL(file), revokeSourceOnClose: true });
+  };
+
+  const openPlayerPhotoUpload = (posId: string) => {
+    const current = state.players[posId];
+    if (!current?.isTemporary) return;
+    setPhotoPasteError(prev => ({ ...prev, [posId]: '' }));
+    setPhotoTarget(posId);
+    photoInputRef.current?.click();
+  };
+
+  const pastePlayerPhoto = async (posId: string) => {
+    const current = state.players[posId];
+    if (!current?.isTemporary) return;
+
+    if (!navigator.clipboard?.read) {
+      setPhotoPasteError(prev => ({
+        ...prev,
+        [posId]: 'Clipboard image paste is not supported by this browser.',
+      }));
+      return;
+    }
+
+    try {
+      const clipboardItems = await navigator.clipboard.read();
+      for (const item of clipboardItems) {
+        const imageType = item.types.find(type => type.startsWith('image/'));
+        if (!imageType) continue;
+        const imageBlob = await item.getType(imageType);
+        setPhotoPasteError(prev => ({ ...prev, [posId]: '' }));
+        setPhotoEditor({
+          posId,
+          sourceUrl: URL.createObjectURL(imageBlob),
+          revokeSourceOnClose: true,
+        });
+        return;
+      }
+      setPhotoPasteError(prev => ({
+        ...prev,
+        [posId]: 'Copy an image first, then click Paste.',
+      }));
+    } catch (error) {
+      const permissionBlocked = error instanceof DOMException && error.name === 'NotAllowedError';
+      setPhotoPasteError(prev => ({
+        ...prev,
+        [posId]: permissionBlocked
+          ? 'Clipboard access was blocked. Allow clipboard permission and try again.'
+          : 'The copied image could not be read.',
+      }));
+    }
   };
 
   const openPlayerPhotoEditor = (posId: string) => {
@@ -218,8 +269,7 @@ const handleTeamSelect = (team: Team) => {
       });
       return;
     }
-    setPhotoTarget(posId);
-    photoInputRef.current?.click();
+    openPlayerPhotoUpload(posId);
   };
 
   const closePhotoEditor = () => {
@@ -300,11 +350,6 @@ const handleTeamSelect = (team: Team) => {
       {/* Sidebar Controls */}
       <div className="w-full lg:w-1/2 p-4 lg:p-8 overflow-y-auto lg:h-screen border-r border-slate-200">
         <div className="max-w-2xl mx-auto">
-          <header className="mb-8">
-            <h1 className="text-3xl font-bold text-slate-900">{config.title}</h1>
-            <p className="text-slate-500">Create professional matchday graphics</p>
-          </header>
-
           <TeamManager
             mode={mode}
             onTeamSelect={handleTeamSelect}
@@ -396,7 +441,7 @@ const handleTeamSelect = (team: Team) => {
                           className="h-20 w-full resize-y rounded-lg border border-slate-300 p-2"
                           value={state.matchday}
                           onChange={(e) => setState(prev => ({ ...prev, matchday: e.target.value }))}
-                          placeholder={'e.g. QUARTER-FINAL\nSecond line'}
+                          placeholder="e.g. Matchday 1"
                         />
                       </div>
                     </>
@@ -527,17 +572,40 @@ const handleTeamSelect = (team: Team) => {
                               <span className="truncate text-sm font-semibold text-indigo-900">{state.players[pos.id]?.displayName}</span>
                             </div>
                             <div className="flex shrink-0 items-center gap-1">
-                              {state.players[pos.id]?.isTemporary && <button
-                                type="button"
-                                onClick={() => openPlayerPhotoEditor(pos.id)}
-                                className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
-                                title={state.players[pos.id]?.imageUrl.startsWith('blob:') ? 'Adjust the current crop' : 'Use a photo just for this lineup'}
-                              >
-                                {state.players[pos.id]?.imageUrl.startsWith('blob:')
-                                  ? <Pencil className="h-3.5 w-3.5" />
-                                  : <Upload className="h-3.5 w-3.5" />}
-                                {state.players[pos.id]?.imageUrl.startsWith('blob:') ? 'Edit image' : 'Add photo'}
-                              </button>}
+                              {state.players[pos.id]?.isTemporary && (
+                                state.players[pos.id]?.imageUrl.startsWith('blob:') ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openPlayerPhotoEditor(pos.id)}
+                                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                                    title="Adjust the current crop"
+                                  >
+                                    <Pencil className="h-3.5 w-3.5" />
+                                    Edit image
+                                  </button>
+                                ) : (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => void pastePlayerPhoto(pos.id)}
+                                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                                      title="Paste a copied image"
+                                    >
+                                      <ClipboardPaste className="h-3.5 w-3.5" />
+                                      Paste
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => openPlayerPhotoUpload(pos.id)}
+                                      className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-indigo-700 hover:bg-indigo-100"
+                                      title="Upload an image"
+                                    >
+                                      <Upload className="h-3.5 w-3.5" />
+                                      Upload
+                                    </button>
+                                  </>
+                                )
+                              )}
                               <button
                                 type="button"
                                 onClick={() => updatePlayer(pos.id, null)}
@@ -548,7 +616,9 @@ const handleTeamSelect = (team: Team) => {
                               </button>
                             </div>
                           </div>
-                          {state.players[pos.id]?.isTemporary && <p className="mt-1 text-xs text-slate-500">Photos stay only in this browser tab and are not uploaded.</p>}
+                          {photoPasteError[pos.id] && (
+                            <p className="mt-1 text-right text-xs text-red-600">{photoPasteError[pos.id]}</p>
+                          )}
                         </div>
                       )}
 

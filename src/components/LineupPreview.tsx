@@ -38,6 +38,8 @@ export default function LineupPreview({ state, mode }: Props) {
         document.fonts.load('900 93px "HeadingNowTrial 57 ExtraBold"'),
         document.fonts.load('bold 30px "Kelson Sans"'),
         document.fonts.load('bold 29.25px "Kelson Sans"'),
+        document.fonts.load('400 28px "Kelson Sans"'),
+        document.fonts.load('700 38px "Kelson Sans Bold"'),
       ]).then(() => undefined);
       return cached;
     };

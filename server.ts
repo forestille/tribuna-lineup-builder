@@ -335,7 +335,7 @@ async function startServer() {
   };
 
   const readSimpleNameUrlCsv = (filePath: string) => {
-    if (!fs.existsSync(filePath)) return [] as Array<{ name: string; url: string }>;
+    if (!fs.existsSync(filePath)) return [] as Array<{ name: string; url: string; category: string }>;
     const content = fs.readFileSync(filePath, "utf-8");
     const lines = content.split("\n").filter(line => line.trim() !== "");
     if (!lines.length) return [];
@@ -351,6 +351,7 @@ async function startServer() {
         return {
           name: String(row.name || '').trim(),
           url: String(row.url || '').trim(),
+          category: String(row.category || '').trim(),
         };
       })
       .filter(row => row.name);
